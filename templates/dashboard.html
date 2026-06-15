@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1a1a2e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.json">
+<title>NSE Swing Scanner</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI',system-ui,-apple-system,sans-serif; background:#0f0f1a; color:#e0e0e0; min-height:100vh; }
+.header { background:linear-gradient(135deg,#1a1a2e,#16213e); padding:16px 20px; border-bottom:1px solid #2a2a4a; }
+.header h1 { font-size:1.3rem; color:#00d4aa; display:flex; align-items:center; gap:10px; }
+.header h1 small { font-size:0.7rem; color:#888; font-weight:400; }
+.container { max-width:1200px; margin:0 auto; padding:16px; }
+.card { background:#1a1a2e; border-radius:12px; padding:16px; margin-bottom:16px; border:1px solid #2a2a4a; }
+.card-title { font-size:0.85rem; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:12px; }
+.row { display:flex; gap:12px; flex-wrap:wrap; }
+.stat { flex:1; min-width:100px; background:#16213e; border-radius:8px; padding:12px; text-align:center; }
+.stat-value { font-size:1.8rem; font-weight:700; color:#00d4aa; line-height:1.2; }
+.stat-label { font-size:0.7rem; color:#888; margin-top:4px; }
+.stat.orange .stat-value { color:#f39c12; }
+.stat.red .stat-value { color:#e74c3c; }
+.stat.blue .stat-value { color:#3498db; }
+table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+th { text-align:left; padding:10px 8px; color:#888; font-weight:500; border-bottom:1px solid #2a2a4a; white-space:nowrap; }
+td { padding:10px 8px; border-bottom:1px solid #1e1e35; white-space:nowrap; }
+tr:hover td { background:rgba(0,212,170,0.05); }
+.badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:0.7rem; font-weight:600; }
+.badge-green { background:#00d4aa22; color:#00d4aa; border:1px solid #00d4aa44; }
+.badge-yellow { background:#f39c1222; color:#f39c12; border:1px solid #f39c1244; }
+.badge-red { background:#e74c3c22; color:#e74c3c; border:1px solid #e74c3c44; }
+.badge-gray { background:#55555522; color:#888; border:1px solid #55555544; }
+.btn { display:inline-flex; align-items:center; gap:8px; padding:10px 24px; border-radius:8px; font-size:0.9rem; font-weight:600; cursor:pointer; border:none; transition:all 0.2s; }
+.btn-primary { background:#00d4aa; color:#0f0f1a; }
+.btn-primary:hover { background:#00e8ba; transform:translateY(-1px); }
+.btn-primary:disabled { background:#2a2a4a; color:#666; cursor:not-allowed; transform:none; }
+.btn-secondary { background:#2a2a4a; color:#e0e0e0; }
+.btn-secondary:hover { background:#3a3a5a; }
+.btn-sm { padding:6px 14px; font-size:0.8rem; }
+.progress-bar { height:6px; background:#2a2a4a; border-radius:3px; overflow:hidden; margin:12px 0; }
+.progress-fill { height:100%; background:linear-gradient(90deg,#00d4aa,#3498db); border-radius:3px; transition:width 0.5s; width:0%; }
+.progress-text { font-size:0.8rem; color:#888; margin-top:4px; }
+.filters { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+.filter-btn { padding:4px 12px; border-radius:16px; font-size:0.75rem; cursor:pointer; border:1px solid #2a2a4a; background:transparent; color:#888; transition:all 0.2s; }
+.filter-btn.active { background:#00d4aa22; border-color:#00d4aa; color:#00d4aa; }
+.filter-btn:hover { border-color:#555; }
+.mobile-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+.footer { text-align:center; padding:20px; color:#444; font-size:0.75rem; }
+.loading { text-align:center; padding:40px; color:#888; }
+.loading .spinner { display:inline-block; width:32px; height:32px; border:3px solid #2a2a4a; border-top-color:#00d4aa; border-radius:50%; animation:spin 0.8s linear infinite; margin-bottom:12px; }
+@keyframes spin { to { transform:rotate(360deg); } }
+@media(max-width:600px) {
+  .header h1 { font-size:1.1rem; }
+  .stat { min-width:70px; padding:8px; }
+  .stat-value { font-size:1.3rem; }
+  table { font-size:0.7rem; }
+  th, td { padding:6px 4px; }
+  .btn { padding:8px 16px; font-size:0.8rem; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>
+    📊 NSE Swing Scanner
+    <small id="headerTime"></small>
+  </h1>
+</div>
+
+<div class="container">
+
+  <!-- Actions -->
+  <div class="card" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+    <button class="btn btn-primary" id="btnScan" onclick="startScan()">🔄 Run Scan (Std)</button>
+    <button class="btn btn-secondary" id="btnScanEarly" onclick="startScan(true)">🔄 Run Scan (Early)</button>
+    <a class="btn btn-secondary btn-sm" id="btnDownload" href="#" onclick="downloadLatest(event)" style="display:none">📥 Download Excel</a>
+  </div>
+
+  <!-- Progress -->
+  <div class="card" id="progressCard" style="display:none">
+    <div class="card-title">⏳ Scan Progress</div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-text" id="progressText">Starting...</div>
+  </div>
+
+  <!-- Stats -->
+  <div class="card" id="statsCard" style="display:none">
+    <div class="card-title">📈 Summary</div>
+    <div class="row" id="statsRow"></div>
+  </div>
+
+  <!-- Results -->
+  <div class="card" id="resultsCard" style="display:none">
+    <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <div class="card-title" style="margin-bottom:0">📋 Watchlist <span id="resultCount"></span></div>
+      <div>
+        <button class="filter-btn active" data-filter="all" onclick="filterTable('all',this)">All</button>
+        <button class="filter-btn" data-filter="BUY NOW" onclick="filterTable('BUY NOW',this)">🟢 Buy Now</button>
+        <button class="filter-btn" data-filter="WATCH" onclick="filterTable('WATCH',this)">🟡 Watch</button>
+        <button class="filter-btn" data-filter="Fresh Breakout" onclick="filterTable('Fresh Breakout',this)">🔥 Fresh</button>
+        <button class="filter-btn" data-filter="WAIT" onclick="filterTable('WAIT',this)">🔴 Wait</button>
+      </div>
+    </div>
+    <div class="mobile-scroll">
+      <table id="resultTable">
+        <thead>
+          <tr>
+            <th>#</th><th>Symbol</th><th>Sector</th><th>Price</th><th>Stage</th><th>1H Setup</th><th>1H Detail</th><th>D_E20</th><th>R:R</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div class="loading" id="loadingState" style="display:none">
+    <div class="spinner"></div>
+    <div>Loading dashboard...</div>
+  </div>
+
+  <!-- Auto-scan info -->
+  <div class="card" style="text-align:center; color:#555; font-size:0.85rem;">
+    ⏰ Scans run daily after market close (3:45 PM IST). Results auto-refresh.
+  </div>
+
+</div>
+
+<div class="footer">NSE Swing Trade Scanner v1.0 &mdash; Data from Yahoo Finance</div>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────
+let currentResults = [];
+let currentFilter = 'all';
+const POLL_INTERVAL = 3000; // 3 seconds
+
+// ─── Init ──────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('headerTime').textContent = new Date().toLocaleTimeString('en-IN');
+  setInterval(() => {
+    document.getElementById('headerTime').textContent = new Date().toLocaleTimeString('en-IN');
+  }, 10000);
+  loadSummary();
+  // Check if there's a running task from URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const taskId = urlParams.get('task');
+  if (taskId) pollStatus(taskId);
+});
+
+// ─── Load existing data ────────────────────────────────────────────
+async function loadSummary() {
+  try {
+    const r = await fetch('/api/watchlist/summary');
+    const d = await r.json();
+    if (d.total > 0) {
+      showStats(d);
+      // Load the full results from the latest CSV via the result endpoint
+      // First check if there's a completed task
+      document.getElementById('btnDownload').style.display = 'inline-flex';
+    }
+  } catch(e) {}
+  
+  // Try loading latest CSV as fallback
+  try {
+    const r = await fetch('/api/scan/result/latest_fallback', { method:'GET' });
+    // ignore
+  } catch(e) {}
+}
+
+// ─── Start Scan ────────────────────────────────────────────────────
+async function startScan(early = false) {
+  const btn = early ? document.getElementById('btnScanEarly') : document.getElementById('btnScan');
+  btn.disabled = true;
+  btn.textContent = early ? '⏳ Scanning...' : '⏳ Scanning...';
+
+  document.getElementById('progressCard').style.display = 'block';
+  document.getElementById('progressFill').style.width = '5%';
+  document.getElementById('progressText').textContent = 'Starting scan...';
+
+  try {
+    const r = await fetch(`/api/scan/start?early=${early}`, { method:'POST' });
+    const d = await r.json();
+    pollStatus(d.task_id);
+  } catch(e) {
+    document.getElementById('progressText').textContent = 'Error: ' + e.message;
+    btn.disabled = false;
+    btn.textContent = early ? '🔄 Run Scan (Early)' : '🔄 Run Scan (Std)';
+  }
+}
+
+// ─── Poll Status ────────────────────────────────────────────────────
+async function pollStatus(taskId) {
+  const progressText = document.getElementById('progressText');
+  const progressFill = document.getElementById('progressFill');
+  let attempts = 0;
+  const maxAttempts = 120; // 6 min max
+
+  const poll = async () => {
+    attempts++;
+    try {
+      const r = await fetch(`/api/scan/status/${taskId}`);
+      const d = await r.json();
+
+      progressText.textContent = d.progress || 'Running...';
+
+      // Simulate progress based on text
+      if (d.status === 'completed') {
+        progressFill.style.width = '100%';
+        progressText.textContent = '✅ ' + d.progress;
+        document.getElementById('btnScan').disabled = false;
+        document.getElementById('btnScan').textContent = '🔄 Run Scan (Std)';
+        document.getElementById('btnScanEarly').disabled = false;
+        document.getElementById('btnScanEarly').textContent = '🔄 Run Scan (Early)';
+        // Load results
+        if (d.has_results) loadResults(taskId);
+        return;
+      }
+      if (d.status === 'error') {
+        progressFill.style.width = '100%';
+        progressFill.style.background = '#e74c3c';
+        progressText.textContent = '❌ ' + (d.progress || 'Error');
+        document.getElementById('btnScan').disabled = false;
+        document.getElementById('btnScan').textContent = '🔄 Run Scan (Std)';
+        document.getElementById('btnScanEarly').disabled = false;
+        document.getElementById('btnScanEarly').textContent = '🔄 Run Scan (Early)';
+        return;
+      }
+
+      // Estimate progress
+      const p = d.progress || '';
+      if (p.includes('Downloading')) {
+        const match = p.match(/Batch (\d+)\/(\d+)/);
+        if (match) progressFill.style.width = Math.min(80, (parseInt(match[1])/parseInt(match[2])*50 + 10)) + '%';
+        else progressFill.style.width = '20%';
+      } else if (p.includes('Screening')) {
+        progressFill.style.width = '50%';
+      } else if (p.includes('1-Hour')) {
+        progressFill.style.width = '70%';
+      } else if (p.includes('Ranking')) {
+        progressFill.style.width = '85%';
+      } else if (p.includes('Exporting')) {
+        progressFill.style.width = '90%';
+      } else {
+        progressFill.style.width = Math.min(95, progressFill.style.width.replace('%','')*1 + 2) + '%';
+      }
+
+      if (attempts < maxAttempts) setTimeout(poll, POLL_INTERVAL);
+      else {
+        progressText.textContent = '⏰ Timed out. Check result manually.';
+        document.getElementById('btnScan').disabled = false;
+        document.getElementById('btnScan').textContent = '🔄 Run Scan (Std)';
+        document.getElementById('btnScanEarly').disabled = false;
+        document.getElementById('btnScanEarly').textContent = '🔄 Run Scan (Early)';
+      }
+    } catch(e) {
+      progressText.textContent = 'Connection error: ' + e.message;
+      if (attempts < 5) setTimeout(poll, 5000);
+    }
+  };
+  setTimeout(poll, 2000);
+}
+
+// ─── Load Results ──────────────────────────────────────────────────
+async function loadResults(taskId) {
+  try {
+    const r = await fetch(`/api/scan/result/${taskId}`);
+    const d = await r.json();
+    currentResults = d.results || [];
+    renderResults(currentResults);
+    showStatsFromData(d);
+    document.getElementById('btnDownload').style.display = 'inline-flex';
+    document.getElementById('btnDownload').href = `/api/watchlist/latest?early=${d.mode === 'early'}`;
+  } catch(e) {
+    console.error('Load error:', e);
+  }
+}
+
+// ─── Render Table ──────────────────────────────────────────────────
+function renderResults(data) {
+  const tbody = document.getElementById('tableBody');
+  const filtered = currentFilter === 'all' 
+    ? data 
+    : data.filter(r => r.Stage === currentFilter || r['1H_Setup'] === currentFilter);
+
+  document.getElementById('resultCount').textContent = `(${filtered.length}/${data.length})`;
+
+  tbody.innerHTML = filtered.map((r, i) => {
+    const setup = r['1H_Setup'] || '-';
+    const setupClass = setup === 'BUY NOW' ? 'badge-green' : setup === 'WATCH' ? 'badge-yellow' : setup === 'WAIT' ? 'badge-red' : 'badge-gray';
+    const stage = r.Stage || '-';
+    const stageClass = stage === 'Fresh Breakout' ? 'badge-green' : stage === 'Strong Momentum' ? 'badge-yellow' : 'badge-gray';
+    const dE20 = r.D_E20 !== undefined && r.D_E20 !== null ? (r.D_E20 > 0 ? '+' : '') + r.D_E20 + '%' : '-';
+    return `<tr>
+      <td>${i+1}</td>
+      <td><strong>${r.Symbol || '-'}</strong></td>
+      <td>${r.Sector || '-'}</td>
+      <td>₹${r.Price?.toFixed?.(2) ?? r.Price ?? '-'}</td>
+      <td><span class="badge ${stageClass}">${stage}</span></td>
+      <td><span class="badge ${setupClass}">${setup}</span></td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;font-size:0.75rem;color:#aaa">${r['1H_Detail'] || '-'}</td>
+      <td style="color:${r.D_E20 > 0 ? '#00d4aa' : '#e74c3c'}">${dE20}</td>
+      <td>${r['R:R'] || '-'}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── Filter ────────────────────────────────────────────────────────
+function filterTable(filter, btn) {
+  currentFilter = filter;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderResults(currentResults);
+}
+
+// ─── Stats ─────────────────────────────────────────────────────────
+function showStats(d) {
+  document.getElementById('statsCard').style.display = 'block';
+  document.getElementById('statsRow').innerHTML = `
+    <div class="stat"><div class="stat-value">${d.total || 0}</div><div class="stat-label">Total Stocks</div></div>
+    <div class="stat blue"><div class="stat-value">${d.fresh_breakouts || 0}</div><div class="stat-label">Fresh Breakout</div></div>
+    <div class="stat green"><div class="stat-value">${d.buy_now || 0}</div><div class="stat-label">BUY NOW</div></div>
+    <div class="stat orange"><div class="stat-value">${d.watch || 0}</div><div class="stat-label">WATCH</div></div>
+    <div class="stat red"><div class="stat-value">${d.wait || 0}</div><div class="stat-label">WAIT</div></div>
+  `;
+}
+
+function showStatsFromData(d) {
+  const data = d.results || [];
+  const fresh = data.filter(r => r.Stage === 'Fresh Breakout').length;
+  const buyNow = data.filter(r => r['1H_Setup'] === 'BUY NOW').length;
+  const watch = data.filter(r => r['1H_Setup'] === 'WATCH').length;
+  const wait = data.filter(r => r['1H_Setup'] === 'WAIT').length;
+  showStats({ total: data.length, fresh_breakouts: fresh, buy_now: buyNow, watch, wait });
+  document.getElementById('resultsCard').style.display = 'block';
+}
+
+// ─── Download ──────────────────────────────────────────────────────
+function downloadLatest(e) {
+  e.preventDefault();
+  window.open(e.target.href, '_blank');
+}
+</script>
+</body>
+</html>
