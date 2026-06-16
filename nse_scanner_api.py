@@ -598,6 +598,70 @@ def service_worker():
     return Response("", media_type="application/javascript")
 
 
+# ─── Debug endpoint ─────────────────────────────────────────────────
+@app.get("/api/debug/1h/{symbol}")
+def debug_1h(symbol: str):
+    """Debug: test 1H analysis for a specific symbol (without .NS suffix)."""
+    from nse_swing_scanner import analyze_1h, adx_dmi, heiken_ashi, ema, rsi, compute_daily_levels
+    import yfinance as yf
+    import pandas as pd
+    
+    sym = symbol.upper().strip()
+    if not sym.endswith(".NS"):
+        sym += ".NS"
+    base = sym.replace(".NS", "")
+    
+    info = {"symbol": sym, "steps": []}
+    
+    # Step 1: Download
+    df = yf.download(sym, period="10d", interval="1h", progress=False, auto_adjust=True)
+    info["download_shape"] = str(df.shape)
+    info["download_empty"] = df.empty
+    info["columns_type"] = str(type(df.columns))
+    info["is_multiindex"] = isinstance(df.columns, pd.MultiIndex)
+    
+    if isinstance(df.columns, pd.MultiIndex):
+        info["level0"] = list(df.columns.get_level_values(0).unique())
+        info["level1"] = list(df.columns.get_level_values(1).unique())
+        if sym in df.columns.get_level_values(1).unique():
+            df = df.xs(sym, axis=1, level=1).copy()
+            info["flatten_method"] = "xs level=1"
+        elif sym in df.columns.get_level_values(0).unique():
+            df = df.xs(sym, axis=1, level=0).copy()
+            info["flatten_method"] = "xs level=0"
+        else:
+            info["flatten_method"] = "FAILED"
+    else:
+        info["flatten_method"] = "flat"
+    
+    info["final_shape"] = str(df.shape)
+    info["final_cols"] = list(df.columns) if hasattr(df, 'columns') else "N/A"
+    
+    if not df.empty:
+        # Check High/Close types
+        info["high_type"] = str(type(df.get("High", "MISSING")))
+        info["close_type"] = str(type(df.get("Close", "MISSING")))
+        
+        if "High" in df.columns:
+            high_series = df["High"]
+            info["high_len"] = len(high_series)
+            info["high_values_sample"] = str(high_series.values[:3].tolist()) if hasattr(high_series, 'values') else "no values"
+            
+            # ADX check
+            from nse_swing_scanner import adx_dmi
+            adx, dp, dm = adx_dmi(df["High"], df["Low"], df["Close"])
+            info["adx"] = round(adx, 2)
+            info["di_plus"] = round(dp, 2)
+            info["di_minus"] = round(dm, 2)
+            info["min_needed"] = "33 bars (14+14+5)"
+    
+    # Full analyze_1h
+    result = list(analyze_1h(sym))
+    info["analyze_result"] = {"signal": result[1], "detail": result[2], "zone": result[3]}
+    
+    return info
+
+
 # ─── Run (for local development) ────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
