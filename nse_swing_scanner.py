@@ -450,6 +450,13 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
     tag = "early" if early_mode else "swing"
     csv_path = os.path.join(output_dir, f"watchlist_{tag}_{ds}.csv")
     xlsx_path = os.path.join(output_dir, f"watchlist_{tag}_{ds}.xlsx")
+    
+    # Also save with old naming for backward compatibility
+    old_csv_path = os.path.join(output_dir, f"swing_watchlist_{ds}.csv")
+    try:
+        df_out.to_csv(old_csv_path, index=False)
+    except Exception:
+        pass
 
     df_out.to_csv(csv_path, index=False)
     print(f"  ✅ CSV: {csv_path}")

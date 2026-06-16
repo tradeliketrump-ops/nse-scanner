@@ -13,9 +13,13 @@ Endpoints:
   GET  /api/watchlist/latest    Download latest Excel file
   GET  /manifest.json           PWA manifest
   GET  /sw.js                   Service worker
+  GET  /api/trades/portfolio    Portfolio summary
+  GET  /api/trades/positions    Trade positions list
+  GET  /api/trades/symbol-stats Per-symbol performance
+  POST /api/trades/refresh      Refresh prices manually
 """
 
-import os, sys, json, uuid, time, threading, csv, io
+import os, sys, json, uuid, time, threading, csv, io, glob, logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -23,11 +27,17 @@ import numpy as np
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Response
+from fastapi import Query
 import pandas as pd
 
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nse_swing_scanner import run_scanner, NSE_SYMBOLS
+from trade_tracker import TradeTracker, get_tracker
+
+# Logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ─── Config ─────────────────────────────────────────────────────────
 OUTPUT_DIR = Path(__file__).parent
@@ -38,6 +48,97 @@ SW_PATH = STATIC_DIR / "sw.js"
 
 # In-memory task store
 tasks = {}
+
+# Scheduler reference (started in lifespan)
+_scheduler = None
+
+# ─── CSV Fallback Helpers ───────────────────────────────────────────
+def find_latest_csv():
+    """Find the most recent CSV file matching any known naming pattern."""
+    patterns = [
+        "watchlist_swing_*.csv",
+        "watchlist_early_*.csv",
+        "swing_watchlist_*.csv",
+        "early_watchlist_*.csv",
+    ]
+    best = None
+    best_mtime = 0
+    for pattern in patterns:
+        for f in glob.glob(str(OUTPUT_DIR / pattern)):
+            try:
+                mtime = os.path.getmtime(f)
+                if mtime > best_mtime:
+                    best_mtime = mtime
+                    best = f
+            except:
+                pass
+    return best
+
+
+OLD_TO_NEW_COLUMNS = {
+    "Dist_EMA20": "D_E20",
+    "Dist_SMA50": "D_S50",
+    "RS_Score": "RS",
+    "Low_Wick": "L_Wick",
+    "Vol_Spike": "V_Spike",
+    "Vol_Ratio": "V_Ratio",
+}
+
+
+def normalize_csv_data(df):
+    """Normalize old-format CSV columns to the new format the dashboard expects."""
+    df = df.copy()
+    # Rename old columns to new
+    for old_col, new_col in OLD_TO_NEW_COLUMNS.items():
+        if old_col in df.columns and new_col not in df.columns:
+            df.rename(columns={old_col: new_col}, inplace=True)
+
+    # Add missing columns with defaults
+    if "Stage" not in df.columns and "Trend" in df.columns:
+        df["Stage"] = df["Trend"].apply(
+            lambda x: "Fresh Breakout" if x == "Bullish" else ("Near Miss" if "Near" in str(x) else "Inactive")
+        )
+    elif "Stage" not in df.columns:
+        df["Stage"] = "Bullish"
+
+    if "Trend" not in df.columns:
+        df["Trend"] = df["Stage"].apply(
+            lambda x: "Bullish" if x in ("Fresh Breakout", "Strong Momentum", "Already Rallied") 
+            else ("Near Miss" if "Near" in str(x) else "Building")
+        )
+
+    if "1H_Setup" not in df.columns:
+        df["1H_Setup"] = "WATCH"
+    if "1H_Detail" not in df.columns:
+        df["1H_Detail"] = "Based on daily scan (no 1H analysis)"
+    if "1H_Zone" not in df.columns:
+        df["1H_Zone"] = "-"
+    if "HH_HL" not in df.columns:
+        df["HH_HL"] = False
+    if "L_Wick" not in df.columns:
+        df["L_Wick"] = False
+    if "R:R" not in df.columns:
+        df["R:R"] = "1:2.50"
+    if "Entry" not in df.columns:
+        df["Entry"] = "-"
+    if "Stop" not in df.columns:
+        df["Stop"] = "-"
+    if "D_E20" not in df.columns and "Price" in df.columns and "EMA20" in df.columns:
+        df["D_E20"] = ((df["Price"] - df["EMA20"]) / df["EMA20"] * 100).round(2)
+    if "D_S50" not in df.columns and "Price" in df.columns and "SMA50" in df.columns:
+        df["D_S50"] = ((df["Price"] - df["SMA50"]) / df["SMA50"] * 100).round(2)
+    if "RS" not in df.columns and "RS_Score" in df.columns:
+        df["RS"] = df["RS_Score"]
+    if "V_Spike" not in df.columns:
+        df["V_Spike"] = "No"
+    if "V_Ratio" not in df.columns:
+        df["V_Ratio"] = 1.0
+
+    # Ensure Rank column
+    if "Rank" not in df.columns:
+        df["Rank"] = 50.0
+
+    return df
 
 # ─── Background Scan Runner ─────────────────────────────────────────
 def run_scan_task(task_id: str, early_mode: bool):
@@ -92,6 +193,17 @@ def run_scan_task(task_id: str, early_mode: bool):
         csv_path = OUTPUT_DIR / f"watchlist_{tag}_{date_str}.csv"
         xlsx_path = OUTPUT_DIR / f"watchlist_{tag}_{date_str}.xlsx"
 
+        # Create trade positions from BUY NOW signals
+        if result_json:
+            try:
+                tracker = TradeTracker()
+                created = tracker.create_positions_from_results(result_json)
+                if created:
+                    logger.info(f"Created {len(created)} trade positions from BUY NOW signals: {created}")
+                    tasks[task_id]["progress"] = f"Scan complete. {len(result_json)} stocks found. {len(created)} trades created."
+            except Exception as trade_e:
+                logger.error(f"Error creating trade positions: {trade_e}")
+
         tasks[task_id].update({
             "status": "completed",
             "progress": f"Scan complete. {len(result_json)} stocks found.",
@@ -111,19 +223,79 @@ def run_scan_task(task_id: str, early_mode: bool):
         })
         sys.stdout = old_stdout
 
+# ─── Scheduler ──────────────────────────────────────────────────────
+def check_trades():
+    """Background job: process pending entries and check open positions."""
+    try:
+        tracker = get_tracker()
+        
+        # Process pending entries (set entry price at market open)
+        activated = tracker.process_pending_entries()
+        if activated:
+            logger.info(f"Activated {len(activated)} pending entries: {[a['symbol'] for a in activated]}")
+        
+        # Check open positions for SL/target hits
+        closed = tracker.check_open_positions()
+        if closed:
+            for c in closed:
+                logger.info(f"Position closed: {c['symbol']} - {c['reason']} - P&L: ₹{c['pnl']}")
+    except Exception as e:
+        logger.error(f"Trade check error: {e}")
+
+
+def start_scheduler():
+    """Initialize and start the APScheduler for trade monitoring."""
+    global _scheduler
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.interval import IntervalTrigger
+        
+        _scheduler = BackgroundScheduler()
+        
+        # Run trade checks every 15 minutes during market hours
+        _scheduler.add_job(
+            check_trades,
+            IntervalTrigger(minutes=15),
+            id="trade_check",
+            name="Check pending entries and open positions",
+            replace_existing=True,
+        )
+        
+        _scheduler.start()
+        logger.info("Trade monitoring scheduler started (every 15 min)")
+    except ImportError:
+        logger.warning("APScheduler not installed. Trade monitoring disabled.")
+    except Exception as e:
+        logger.error(f"Failed to start scheduler: {e}")
+
+
+def stop_scheduler():
+    """Shut down the scheduler gracefully."""
+    global _scheduler
+    if _scheduler:
+        try:
+            _scheduler.shutdown(wait=False)
+            logger.info("Scheduler stopped")
+        except:
+            pass
+        _scheduler = None
+
 # ─── FastAPI App ────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown."""
-    # Create static directory
     STATIC_DIR.mkdir(exist_ok=True)
     (OUTPUT_DIR / "templates").mkdir(exist_ok=True)
+    # Start background scheduler
+    start_scheduler()
     yield
+    # Shutdown
+    stop_scheduler()
 
 app = FastAPI(
     title="NSE Swing Trade Scanner",
     description="Daily scan for NSE swing trading opportunities with 1-hour entry analysis",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -233,14 +405,14 @@ def download_latest(early: bool = False):
 @app.get("/api/watchlist/summary")
 def watchlist_summary():
     """Get a quick summary of the latest watchlist data."""
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    csv_path = OUTPUT_DIR / f"watchlist_swing_{date_str}.csv"
-
-    if not csv_path.exists():
+    csv_path = find_latest_csv()
+    if not csv_path:
         return {"total": 0, "message": "No watchlist found"}
 
     try:
         df = pd.read_csv(csv_path)
+        df = normalize_csv_data(df)
+        date_str = Path(csv_path).stem.split("_")[-1] if Path(csv_path).stem.count("_") >= 2 else datetime.now().strftime("%Y-%m-%d")
         summary = {
             "total": len(df),
             "date": date_str,
@@ -254,6 +426,126 @@ def watchlist_summary():
         return summary
     except Exception as e:
         return {"total": 0, "error": str(e)}
+
+
+@app.get("/api/watchlist/latest-data")
+def watchlist_latest_data():
+    """Get the latest watchlist results as JSON (with column normalization)."""
+    csv_path = find_latest_csv()
+    if not csv_path:
+        return {"count": 0, "results": [], "mode": "standard", "message": "No watchlist CSV found. Run a scan first."}
+
+    try:
+        df = pd.read_csv(csv_path)
+        df = normalize_csv_data(df)
+
+        # Sort by Rank descending
+        if "Rank" in df.columns:
+            df = df.sort_values("Rank", ascending=False).reset_index(drop=True)
+
+        # Convert to JSON with proper types
+        result_json = json.loads(df.to_json(orient="records", date_format="iso"))
+        for row in result_json:
+            for k, v in row.items():
+                if isinstance(v, (np.integer,)): row[k] = int(v)
+                elif isinstance(v, (np.floating,)): row[k] = round(float(v), 2)
+                elif pd.isna(v): row[k] = None
+
+        # Determine mode from filename
+        filename = Path(csv_path).name
+        mode = "early" if "early" in filename else "standard"
+
+        return {
+            "count": len(result_json),
+            "results": result_json,
+            "mode": mode,
+            "csv_file": str(csv_path),
+            "completed_at": datetime.fromtimestamp(os.path.getmtime(csv_path)).isoformat(),
+        }
+    except Exception as e:
+        return {"count": 0, "results": [], "mode": "standard", "error": str(e)}
+
+
+# ─── Trade/Portfolio API Endpoints ─────────────────────────────────
+
+@app.get("/api/trades/portfolio")
+def trades_portfolio():
+    """Get portfolio summary with P&L, win rate, and counts."""
+    try:
+        tracker = get_tracker()
+        summary = tracker.get_portfolio_summary()
+        return summary
+    except Exception as e:
+        logger.error(f"Portfolio summary error: {e}")
+        return {
+            "total_invested": 0, "current_value": 0, "total_pnl": 0,
+            "total_pnl_percent": 0, "win_rate": 0, "active_count": 0,
+            "pending_count": 0, "closed_count": 0, "total_signals": 0,
+            "wins": 0, "losses": 0, "error": str(e),
+        }
+
+
+@app.get("/api/trades/positions")
+def trades_positions(status: str = Query("all", description="Filter: all, pending_entry, active, closed")):
+    """Get list of trade positions, optionally filtered by status."""
+    try:
+        tracker = get_tracker()
+        status_filter = status if status != "all" else None
+        positions = tracker.get_positions(status_filter)
+        return {"count": len(positions), "positions": positions}
+    except Exception as e:
+        logger.error(f"Positions error: {e}")
+        return {"count": 0, "positions": [], "error": str(e)}
+
+
+@app.get("/api/trades/symbol-stats")
+def trades_symbol_stats():
+    """Get per-symbol trade performance breakdown."""
+    try:
+        tracker = get_tracker()
+        stats = tracker.get_symbol_stats()
+        return {"count": len(stats), "stats": stats}
+    except Exception as e:
+        logger.error(f"Symbol stats error: {e}")
+        return {"count": 0, "stats": [], "error": str(e)}
+
+
+@app.post("/api/trades/refresh")
+def trades_refresh():
+    """Manually trigger price refresh for all open/pending positions."""
+    try:
+        tracker = get_tracker()
+        result = tracker.refresh_all_prices()
+        # Also run entry processing and position checks
+        activated = tracker.process_pending_entries()
+        closed = tracker.check_open_positions()
+        return {
+            "updated": result["updated"],
+            "failed": result["failed"],
+            "activated": len(activated),
+            "closed": len(closed),
+            "details": {
+                "activated_symbols": [a["symbol"] for a in activated],
+                "closed_positions": closed,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Refresh error: {e}")
+        return {"updated": 0, "failed": 0, "activated": 0, "closed": 0, "error": str(e)}
+
+
+@app.get("/api/trades/history")
+def trades_history():
+    """Get the raw trades_history.json content."""
+    try:
+        tracker = get_tracker()
+        return {
+            "position_count": len(tracker.data.get("positions", {})),
+            "created_at": tracker.data.get("created_at"),
+            "updated_at": tracker.data.get("updated_at"),
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ─── Serve Dashboard ────────────────────────────────────────────────
@@ -286,7 +578,7 @@ def service_worker():
 if __name__ == "__main__":
     import uvicorn
     print("=" * 60)
-    print("  NSE Swing Scanner API")
+    print("  NSE Swing Scanner API v1.1")
     print(f"  Dashboard: http://localhost:8000")
     print(f"  API Docs:  http://localhost:8000/docs")
     print("=" * 60)
