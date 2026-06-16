@@ -429,7 +429,7 @@ def watchlist_summary():
 
 
 @app.get("/api/watchlist/latest-data")
-def watchlist_latest_data():
+def watchlist_latest_data(sync_trades: bool = Query(True, description="Auto-create trade positions from BUY NOW signals")):
     """Get the latest watchlist results as JSON (with column normalization)."""
     csv_path = find_latest_csv()
     if not csv_path:
@@ -454,6 +454,16 @@ def watchlist_latest_data():
         # Determine mode from filename
         filename = Path(csv_path).name
         mode = "early" if "early" in filename else "standard"
+
+        # Auto-create trade positions from BUY NOW signals in CSV data
+        if sync_trades and result_json:
+            try:
+                tracker = TradeTracker()
+                created = tracker.create_positions_from_results(result_json)
+                if created:
+                    logger.info(f"Auto-created {len(created)} positions from CSV: {created}")
+            except Exception as trade_e:
+                logger.error(f"Error auto-creating positions from CSV: {trade_e}")
 
         return {
             "count": len(result_json),
