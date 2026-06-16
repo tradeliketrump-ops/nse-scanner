@@ -32,7 +32,7 @@ import pandas as pd
 
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nse_swing_scanner import run_scanner, NSE_SYMBOLS
+from nse_swing_scanner import run_scanner, NSE_SYMBOLS, get_nse_symbols
 from trade_tracker import TradeTracker, get_tracker
 
 # Logger
@@ -204,12 +204,14 @@ def run_scan_task(task_id: str, early_mode: bool):
             except Exception as trade_e:
                 logger.error(f"Error creating trade positions: {trade_e}")
 
+        total_scanned = len(get_nse_symbols())
         tasks[task_id].update({
             "status": "completed",
             "progress": f"Scan complete. {len(result_json)} stocks found.",
             "completed_at": datetime.now().isoformat(),
             "results": result_json,
             "count": len(result_json),
+            "total_scanned": total_scanned,
             "csv_file": str(csv_path) if csv_path.exists() else None,
             "xlsx_file": str(xlsx_path) if xlsx_path.exists() else None,
             "mode": "early" if early_mode else "standard",
@@ -369,6 +371,7 @@ def scan_result(task_id: str):
         "task_id": task_id,
         "status": t["status"],
         "count": t["count"],
+        "total_scanned": t.get("total_scanned", len(get_nse_symbols())),
         "mode": t.get("mode"),
         "completed_at": t["completed_at"],
         "results": t["results"],
@@ -415,8 +418,10 @@ def watchlist_summary():
         date_str = Path(csv_path).stem.split("_")[-1] if Path(csv_path).stem.count("_") >= 2 else datetime.now().strftime("%Y-%m-%d")
         
         setup_col = df.get("1H_Setup", pd.Series(dtype=str))
+        total_scanned = len(get_nse_symbols())
         summary = {
             "total": len(df),
+            "total_scanned": total_scanned,
             "date": date_str,
             "fresh_breakouts": int((df.get("Stage") == "Fresh Breakout").sum()) if "Stage" in df else 0,
             "strong_momentum": int((df.get("Stage") == "Strong Momentum").sum()) if "Stage" in df else 0,
@@ -472,15 +477,17 @@ def watchlist_latest_data(sync_trades: bool = Query(True, description="Auto-crea
             except Exception as trade_e:
                 logger.error(f"Error auto-creating positions from CSV: {trade_e}")
 
+        total_scanned = len(get_nse_symbols())
         return {
             "count": len(result_json),
+            "total_scanned": total_scanned,
             "results": result_json,
             "mode": mode,
             "csv_file": str(csv_path),
             "completed_at": datetime.fromtimestamp(os.path.getmtime(csv_path)).isoformat(),
         }
     except Exception as e:
-        return {"count": 0, "results": [], "mode": "standard", "error": str(e)}
+        return {"count": 0, "results": [], "total_scanned": 0, "mode": "standard", "error": str(e)}
 
 
 # ─── Trade/Portfolio API Endpoints ─────────────────────────────────

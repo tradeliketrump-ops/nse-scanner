@@ -113,7 +113,7 @@ tr:hover td { background:rgba(0,212,170,0.05); }
 
     <!-- Stats -->
     <div class="card" id="statsCard" style="display:none">
-      <div class="card-title">📈 Summary</div>
+      <div class="card-title">📈 Summary <span id="scanDateRange" style="font-size:0.75rem;color:#555;font-weight:400;">&nbsp;</span></div>
       <div class="row" id="statsRow"></div>
     </div>
 
@@ -121,13 +121,14 @@ tr:hover td { background:rgba(0,212,170,0.05); }
     <div class="card" id="resultsCard" style="display:none">
       <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:12px;">
         <div class="card-title" style="margin-bottom:0">📋 Watchlist <span id="resultCount"></span></div>
-        <div>
-          <button class="filter-btn active" data-filter="all" onclick="filterTable('all',this)">All</button>
-          <button class="filter-btn" data-filter="BUY NOW" onclick="filterTable('BUY NOW',this)">🟢 Buy Now</button>
-          <button class="filter-btn" data-filter="WATCH" onclick="filterTable('WATCH',this)">🟡 Watch</button>
-          <button class="filter-btn" data-filter="Fresh Breakout" onclick="filterTable('Fresh Breakout',this)">🔥 Fresh</button>
-          <button class="filter-btn" data-filter="WAIT" onclick="filterTable('WAIT',this)">🔴 Wait</button>
-        </div>
+      <div>
+        <button class="filter-btn active" data-filter="all" onclick="filterTable('all',this)">All</button>
+        <button class="filter-btn" data-filter="BUY-R" onclick="filterTable('BUY-R',this)">🟢 Buy-R</button>
+        <button class="filter-btn" data-filter="BUY-B" onclick="filterTable('BUY-B',this)">🩵 Buy-B</button>
+        <button class="filter-btn" data-filter="SELL-R" onclick="filterTable('SELL-R',this)">🔴 Sell-R</button>
+        <button class="filter-btn" data-filter="SELL-B" onclick="filterTable('SELL-B',this)">🩷 Sell-B</button>
+        <button class="filter-btn" data-filter="Fresh Breakout" onclick="filterTable('Fresh Breakout',this)">� Fresh</button>
+      </div>
       </div>
       <div class="mobile-scroll">
         <table id="resultTable">
@@ -396,21 +397,25 @@ function filterTable(filter, btn) {
 // ─── Stats ─────────────────────────────────────────────────────────
 function showStats(d) {
   document.getElementById('statsCard').style.display = 'block';
+  const totalScanned = d.total_scanned || d.total || 0;
+  const qualified = d.total || 0;
+  const filteredOut = totalScanned - qualified;
   document.getElementById('statsRow').innerHTML = `
-    <div class="stat"><div class="stat-value">${d.total || 0}</div><div class="stat-label">Total Stocks</div></div>
-    <div class="stat blue"><div class="stat-value">${d.fresh_breakouts || 0}</div><div class="stat-label">Fresh Breakout</div></div>
-    <div class="stat green"><div class="stat-value">${d.buy_now || 0}</div><div class="stat-label">BUY NOW</div></div>
-    <div class="stat orange"><div class="stat-value">${d.watch || 0}</div><div class="stat-label">WATCH</div></div>
+    <div class="stat blue"><div class="stat-value">${totalScanned}</div><div class="stat-label">📡 Scanned</div></div>
+    <div class="stat green"><div class="stat-value">${qualified}</div><div class="stat-label">🎯 Qualified</div></div>
+    <div class="stat orange"><div class="stat-value">${filteredOut}</div><div class="stat-label">🔍 Filtered Out</div></div>
+    <div class="stat"><div class="stat-value">${d.fresh_breakouts || 0}</div><div class="stat-label">Fresh Breakout</div></div>
+    <div class="stat"><div class="stat-value">${d.buy_now || 0}</div><div class="stat-label">BUY NOW</div></div>
     <div class="stat red"><div class="stat-value">${d.wait || 0}</div><div class="stat-label">WAIT</div></div>
   `;
 }
 function showStatsFromData(d) {
   const data = d.results || [];
   const fresh = data.filter(r => r.Stage === 'Fresh Breakout').length;
-  const buyNow = data.filter(r => r['1H_Setup'] === 'BUY NOW').length;
+  const buyNow = data.filter(r => r['1H_Setup'] === 'BUY-R' || r['1H_Setup'] === 'BUY-B').length;
   const watch = data.filter(r => r['1H_Setup'] === 'WATCH').length;
   const wait = data.filter(r => r['1H_Setup'] === 'WAIT').length;
-  showStats({ total: data.length, fresh_breakouts: fresh, buy_now: buyNow, watch, wait });
+  showStats({ total: data.length, total_scanned: d.total_scanned, fresh_breakouts: fresh, buy_now: buyNow, watch, wait });
   document.getElementById('resultsCard').style.display = 'block';
 }
 
