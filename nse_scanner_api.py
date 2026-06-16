@@ -245,12 +245,73 @@ def check_trades():
         logger.error(f"Trade check error: {e}")
 
 
+def run_intraday_scan():
+    """Intraday scan: re-run 1H analysis on existing qualifying stocks to catch same-day signals."""
+    from nse_swing_scanner import analyze_1h, strip_ns, adx_dmi, heiken_ashi, ema, rsi
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    
+    try:
+        # Find the latest CSV to get the qualified symbols list
+        csv_path = find_latest_csv()
+        if not csv_path:
+            logger.info("Intraday scan: no CSV found, skipping")
+            return
+        
+        df = pd.read_csv(csv_path)
+        if df.empty:
+            return
+        
+        # Get symbols from the last daily scan results
+        symbols = [row["Symbol"] + ".NS" for _, row in df.iterrows()]
+        logger.info(f"Intraday scan: re-analyzing {len(symbols)} stocks (1H only)...")
+        
+        # Run parallel 1H analysis
+        results_map = {}
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            fut = {ex.submit(analyze_1h, s): s for s in symbols}
+            for f in as_completed(fut):
+                sym, signal, detail, zone = f.result()
+                base = strip_ns(sym)
+                results_map[base] = {"1H_Setup": signal, "1H_Detail": detail, "1H_Zone": zone}
+        
+        # Check for new BUY signals and create positions
+        buy_signals = []
+        for _, row in df.iterrows():
+            base = row["Symbol"]
+            if base in results_map:
+                sig = results_map[base]
+                if sig["1H_Setup"] in ("BUY-R", "BUY-B"):
+                    buy_signals.append({
+                        "Symbol": base,
+                        "Sector": row.get("Sector", "Unknown"),
+                        "Price": row.get("Price", 0),
+                        "1H_Setup": sig["1H_Setup"],
+                        "1H_Detail": sig["1H_Detail"],
+                        "Entry": row.get("Entry", "-"),
+                        "Stop": row.get("Stop", "-"),
+                        "R:R": row.get("R:R", "-"),
+                    })
+        
+        if buy_signals:
+            logger.info(f"Intraday scan: {len(buy_signals)} new BUY signals found")
+            tracker = TradeTracker()
+            created = tracker.create_positions_from_results(buy_signals, same_day_entry=True)
+            if created:
+                logger.info(f"Intraday scan: created {len(created)} positions same-day: {created}")
+        else:
+            logger.info("Intraday scan: no new BUY signals")
+            
+    except Exception as e:
+        logger.error(f"Intraday scan error: {e}")
+
+
 def start_scheduler():
-    """Initialize and start the APScheduler for trade monitoring."""
+    """Initialize and start the APScheduler for intraday scanning and trade monitoring."""
     global _scheduler
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
         from apscheduler.triggers.interval import IntervalTrigger
+        from apscheduler.triggers.cron import CronTrigger
         
         _scheduler = BackgroundScheduler()
         
@@ -263,8 +324,43 @@ def start_scheduler():
             replace_existing=True,
         )
         
+        # Intraday scans at market-relevant times (IST)
+        # In cron format: minute hour day-of-month month day-of-week
+        # 9:45 AM - catch early morning breakouts
+        _scheduler.add_job(
+            run_intraday_scan,
+            CronTrigger(hour=9, minute=45, timezone="Asia/Kolkata"),
+            id="intraday_0945",
+            name="Intraday 1H scan 9:45 AM",
+            replace_existing=True,
+        )
+        # 11:00 AM - mid-morning
+        _scheduler.add_job(
+            run_intraday_scan,
+            CronTrigger(hour=11, minute=0, timezone="Asia/Kolkata"),
+            id="intraday_1100",
+            name="Intraday 1H scan 11:00 AM",
+            replace_existing=True,
+        )
+        # 1:00 PM - early afternoon
+        _scheduler.add_job(
+            run_intraday_scan,
+            CronTrigger(hour=13, minute=0, timezone="Asia/Kolkata"),
+            id="intraday_1300",
+            name="Intraday 1H scan 1:00 PM",
+            replace_existing=True,
+        )
+        # 2:30 PM - late afternoon (last chance before EOD scan)
+        _scheduler.add_job(
+            run_intraday_scan,
+            CronTrigger(hour=14, minute=30, timezone="Asia/Kolkata"),
+            id="intraday_1430",
+            name="Intraday 1H scan 2:30 PM",
+            replace_existing=True,
+        )
+        
         _scheduler.start()
-        logger.info("Trade monitoring scheduler started (every 15 min)")
+        logger.info("Intraday scan scheduler started (9:45, 11:00, 13:00, 14:30 IST)")
     except ImportError:
         logger.warning("APScheduler not installed. Trade monitoring disabled.")
     except Exception as e:

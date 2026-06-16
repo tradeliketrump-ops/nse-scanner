@@ -135,13 +135,15 @@ class TradeTracker:
 
     # ─── Position Creation ──────────────────────────────────────────
 
-    def create_positions_from_results(self, results: list[dict], signal_date: Optional[str] = None) -> list[str]:
+    def create_positions_from_results(self, results: list[dict], signal_date: Optional[str] = None, same_day_entry: bool = False) -> list[str]:
         """
-        Scan scanner results for "BUY NOW" signals and create pending_entry positions.
+        Scan scanner results for "BUY NOW" signals and create positions.
 
         Args:
             results: List of result dicts from the scanner (with 1H_Setup, Symbol, Sector, Price, Entry, Stop, R:R)
             signal_date: Date string (YYYY-MM-DD). Defaults to today.
+            same_day_entry: If True, enter immediately at signal price (for intraday scans).
+                           If False, create pending_entry for next-day entry (for EOD scans).
 
         Returns:
             List of created position IDs.
@@ -168,33 +170,68 @@ class TradeTracker:
             signal_price = row.get("Price")
             if signal_price is None:
                 signal_price = row.get("signal_price", 0)
+            signal_price = float(signal_price)
 
-            position = {
-                "id": pos_id,
-                "symbol": symbol,
-                "sector": sector,
-                "signal_date": signal_date,
-                "signal_price": float(signal_price),
-                "entry_date": None,
-                "entry_price": None,
-                "stop_loss": None,
-                "target": None,
-                "capital": CAPITAL_PER_POSITION,
-                "quantity": None,
-                "status": STATUS_PENDING_ENTRY,
-                "close_date": None,
-                "close_price": None,
-                "close_reason": None,
-                "pnl": None,
-                "pnl_percent": None,
-                "current_price": float(signal_price),
-                "entry_zone": row.get("Entry", ""),
-                "suggested_stop": row.get("Stop", ""),
-                "rr": row.get("R:R", ""),
-            }
+            if same_day_entry:
+                # Enter immediately at signal price (intraday scan)
+                stop_loss = round(signal_price * (1 - STOP_LOSS_PCT), 2)
+                target = round(signal_price * (1 + PROFIT_TARGET_PCT), 2)
+                quantity = int(CAPITAL_PER_POSITION / signal_price)
+                if quantity < 1:
+                    quantity = 1
+                position = {
+                    "id": pos_id,
+                    "symbol": symbol,
+                    "sector": sector,
+                    "signal_date": signal_date,
+                    "signal_price": signal_price,
+                    "entry_date": signal_date,
+                    "entry_price": signal_price,
+                    "stop_loss": stop_loss,
+                    "target": target,
+                    "capital": CAPITAL_PER_POSITION,
+                    "quantity": quantity,
+                    "status": STATUS_ACTIVE,
+                    "close_date": None,
+                    "close_price": None,
+                    "close_reason": None,
+                    "pnl": None,
+                    "pnl_percent": None,
+                    "current_price": signal_price,
+                    "entry_zone": row.get("Entry", ""),
+                    "suggested_stop": row.get("Stop", ""),
+                    "rr": row.get("R:R", ""),
+                }
+                logger.info(f"Immediate entry: {pos_id} @ ₹{signal_price} x {quantity} | SL: {stop_loss} | Tgt: {target}")
+            else:
+                # Standard: pending entry for next-day open
+                position = {
+                    "id": pos_id,
+                    "symbol": symbol,
+                    "sector": sector,
+                    "signal_date": signal_date,
+                    "signal_price": signal_price,
+                    "entry_date": None,
+                    "entry_price": None,
+                    "stop_loss": None,
+                    "target": None,
+                    "capital": CAPITAL_PER_POSITION,
+                    "quantity": None,
+                    "status": STATUS_PENDING_ENTRY,
+                    "close_date": None,
+                    "close_price": None,
+                    "close_reason": None,
+                    "pnl": None,
+                    "pnl_percent": None,
+                    "current_price": signal_price,
+                    "entry_zone": row.get("Entry", ""),
+                    "suggested_stop": row.get("Stop", ""),
+                    "rr": row.get("R:R", ""),
+                }
+                logger.info(f"Created pending position: {pos_id} @ ₹{signal_price}")
+
             self.data["positions"][pos_id] = position
             created.append(pos_id)
-            logger.info(f"Created pending position: {pos_id} @ ₹{signal_price}")
 
         if created:
             self._save()
