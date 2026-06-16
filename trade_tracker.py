@@ -152,7 +152,7 @@ class TradeTracker:
         created = []
         for row in results:
             setup = row.get("1H_Setup", "")
-            if setup != "BUY NOW":
+            if setup not in ("BUY-R", "BUY-B"):
                 continue
 
             symbol = row.get("Symbol", "")

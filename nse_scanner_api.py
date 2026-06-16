@@ -413,14 +413,21 @@ def watchlist_summary():
         df = pd.read_csv(csv_path)
         df = normalize_csv_data(df)
         date_str = Path(csv_path).stem.split("_")[-1] if Path(csv_path).stem.count("_") >= 2 else datetime.now().strftime("%Y-%m-%d")
+        
+        setup_col = df.get("1H_Setup", pd.Series(dtype=str))
         summary = {
             "total": len(df),
             "date": date_str,
             "fresh_breakouts": int((df.get("Stage") == "Fresh Breakout").sum()) if "Stage" in df else 0,
             "strong_momentum": int((df.get("Stage") == "Strong Momentum").sum()) if "Stage" in df else 0,
-            "buy_now": int((df.get("1H_Setup") == "BUY NOW").sum()) if "1H_Setup" in df else 0,
-            "watch": int((df.get("1H_Setup") == "WATCH").sum()) if "1H_Setup" in df else 0,
-            "wait": int((df.get("1H_Setup") == "WAIT").sum()) if "1H_Setup" in df else 0,
+            "buy_now": int((setup_col == "BUY-R").sum()) + int((setup_col == "BUY-B").sum()),
+            "buy_r": int((setup_col == "BUY-R").sum()),
+            "buy_b": int((setup_col == "BUY-B").sum()),
+            "sell_r": int((setup_col == "SELL-R").sum()),
+            "sell_b": int((setup_col == "SELL-B").sum()),
+            "neutral": int((setup_col == "NEUTRAL").sum()),
+            "watch": 0,
+            "wait": 0,
             "sectors": df["Sector"].value_counts().head(5).to_dict() if "Sector" in df else {},
         }
         return summary

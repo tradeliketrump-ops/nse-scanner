@@ -39,6 +39,17 @@ NEAR_MISS_PCT       = 0.5
 PARALLEL_WORKERS    = 10  # for 1H analysis
 HOURS_LOOKBACK      = 5   # days of 1H data
 
+# ─── PINE SCRIPT TV-LEVEL CONSTANTS ────────────────────────────────
+SELL_REV_MULT   = 0.29   # sellReversal = pivot + dailyATR * 0.29
+BUY_REV_MULT    = 0.21   # buyReversal  = pivot - dailyATR * 0.21
+BREAKOUT_MULT   = 0.54   # breakout     = pivot + dailyATR * 0.54
+BREAKDOWN_MULT  = 0.46   # breakdown    = pivot - dailyATR * 0.46
+ADX_THRESHOLD   = 20     # minimum ADX for trend filter
+ADX_LEN         = 14     # ADX lookback period
+ADX_SMOOTH      = 14     # ADX smoothing period
+RSI_EXTREME_LONG  = 80   # avoid buy when RSI > 80
+RSI_EXTREME_SHORT = 20   # avoid sell when RSI < 20
+
 # ─── NSE SYMBOLS ─────────────────────────────────────────────────────
 NSE_SYMBOLS = [
     "RELIANCE.NS","TCS.NS","HDFCBANK.NS","ICICIBANK.NS","INFY.NS",
@@ -73,7 +84,7 @@ NSE_SYMBOLS = [
 ]
 NIFTY50_SYMBOL = "^NSEI"
 
-SECTOR_MAP = {  # (abbreviated — same as before)
+SECTOR_MAP = {
     "RELIANCE":"Oil & Gas","TCS":"IT","HDFCBANK":"Banking","ICICIBANK":"Banking",
     "INFY":"IT","HINDUNILVR":"FMCG","SBIN":"Banking","BHARTIARTL":"Telecom",
     "KOTAKBANK":"Banking","ITC":"FMCG","BAJFINANCE":"Fin Services","LT":"Infra",
@@ -223,73 +234,236 @@ def get_nm_info(ha_df, e20, s50, th=NEAR_MISS_PCT):
     elif cm>=1 and pa<=th*2: return f"About to Cross ({', '.join(miss)})", pa
     else: return f"Not Ready ({', '.join(miss)})", pa
 
-# ─── 1-HOUR ENTRY ANALYSIS ──────────────────────────────────────────
+# ─── TV-STYLE HELPER FUNCTIONS ─────────────────────────────────────
+
+def daily_atr(df: pd.DataFrame, period: int = 14) -> float:
+    """Compute ATR from daily OHLC DataFrame. Returns last ATR value."""
+    if len(df) < period + 1:
+        return 0.0
+    high = df["High"].values
+    low = df["Low"].values
+    close = df["Close"].values
+    prev_close = np.roll(close, 1)
+    prev_close[0] = close[0]
+    tr = np.maximum(high - low,
+                    np.maximum(np.abs(high - prev_close),
+                               np.abs(low - prev_close)))
+    # Wilder smoothing
+    atr_vals = np.zeros_like(tr)
+    atr_vals[period] = np.mean(tr[1:period+1])
+    for i in range(period + 1, len(tr)):
+        atr_vals[i] = (atr_vals[i-1] * (period - 1) + tr[i]) / period
+    return float(atr_vals[-1]) if atr_vals[-1] > 0 else float(np.mean(tr[-period:]))
+
+
+def adx_dmi(high: pd.Series, low: pd.Series, close: pd.Series,
+            period: int = 14, smoothing: int = 14) -> tuple:
+    """Compute ADX, DI+, DI- from high/low/close series."""
+    if len(high) < period + smoothing + 5:
+        return 0.0, 0.0, 0.0
+
+    high_a = high.values
+    low_a = low.values
+    close_a = close.values
+
+    up_move = np.diff(high_a, prepend=high_a[0])
+    down_move = np.diff(low_a, prepend=low_a[0]) * -1
+
+    # +DM and -DM
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+    # True Range
+    prev_close = np.roll(close_a, 1)
+    prev_close[0] = close_a[0]
+    tr = np.maximum(high_a - low_a,
+                    np.maximum(np.abs(high_a - prev_close),
+                               np.abs(low_a - prev_close)))
+
+    # Wilder smooth
+    def wilder_smooth(arr, p):
+        out = np.zeros_like(arr)
+        out[p] = np.mean(arr[1:p+1])
+        for i in range(p + 1, len(arr)):
+            out[i] = (out[i-1] * (p - 1) + arr[i]) / p
+        return out
+
+    s_plus_dm = wilder_smooth(plus_dm, period)
+    s_minus_dm = wilder_smooth(minus_dm, period)
+    s_tr = wilder_smooth(tr, period)
+
+    di_plus = 100.0 * s_plus_dm / np.where(s_tr > 0, s_tr, 1.0)
+    di_minus = 100.0 * s_minus_dm / np.where(s_tr > 0, s_tr, 1.0)
+
+    dx = 100.0 * np.abs(di_plus - di_minus) / np.where((di_plus + di_minus) > 0, di_plus + di_minus, 1.0)
+    adx_vals = wilder_smooth(dx, smoothing)
+
+    return float(adx_vals[-1]), float(di_plus[-1]), float(di_minus[-1])
+
+
+def compute_daily_levels(symbol: str) -> dict | None:
+    """Fetch yesterday's daily OHLC and compute pivot/ATR structural levels."""
+    try:
+        end = datetime.now()
+        start = end - timedelta(days=45)
+        df = yf.download(symbol, start=start.strftime("%Y-%m-%d"),
+                         end=end.strftime("%Y-%m-%d"),
+                         interval="1d", progress=False, auto_adjust=True)
+        if df.empty or len(df) < 16:
+            return None
+
+        # Handle MultiIndex
+        if isinstance(df.columns, pd.MultiIndex):
+            cols = df.columns.get_level_values(0).unique()
+            if len(cols) >= 4:
+                # Flatten: take first ticker
+                ticker = df.columns.get_level_values(1).unique()[0] if len(df.columns.get_level_values(1).unique()) > 0 else cols[0]
+                if ticker in df.columns.get_level_values(1).unique():
+                    df = df.xs(ticker, axis=1, level=1).copy()
+                else:
+                    df = df.xs(cols[0], axis=1, level=0).copy()
+
+        # Get yesterday's data (day before last)
+        if len(df) >= 2:
+            prev = df.iloc[-2]
+        else:
+            prev = df.iloc[-1]
+
+        prev_high = float(prev["High"]) if "High" in prev else float(prev["High"])
+        prev_low = float(prev["Low"]) if "Low" in prev else float(prev["Low"])
+        prev_close = float(prev["Close"]) if "Close" in prev else float(prev[3])
+
+        pivot = (prev_high + prev_low + prev_close) / 3.0
+        atr_val = daily_atr(df)
+
+        return {
+            "pivot": pivot,
+            "daily_atr": atr_val,
+            "sell_reversal": pivot + atr_val * SELL_REV_MULT,
+            "buy_reversal": pivot - atr_val * BUY_REV_MULT,
+            "breakout": pivot + atr_val * BREAKOUT_MULT,
+            "breakdown": pivot - atr_val * BREAKDOWN_MULT,
+        }
+    except Exception as e:
+        return None
+
+
+# ─── 1-HOUR ENTRY ANALYSIS (TV-STYLE) ──────────────────────────────
 def analyze_1h(symbol):
-    """Download 1H data and return entry quality. Runs in parallel."""
+    """
+    TV-style 1H analysis using daily pivot/ATR levels, ADX/DMI trend,
+    and breakout/breakdown/reversal signal logic.
+
+    Returns (symbol, signal_type, detail, levels_str).
+    signal_type: BUY-R, BUY-B, SELL-R, SELL-B, NEUTRAL, NO DATA
+    """
     try:
         df = yf.download(symbol, period=f"{HOURS_LOOKBACK}d", interval="1h",
                          progress=False, auto_adjust=True)
-        if df.empty or len(df) < 10:
-            return symbol, "No 1H Data", "-", "-"
-        
+        if df.empty or len(df) < 20:
+            return symbol, "NO DATA", "Insufficient 1H data", "-"
+
         # Handle MultiIndex
         if isinstance(df.columns, pd.MultiIndex):
             if symbol in df.columns.get_level_values(1).unique():
                 df = df.xs(symbol, axis=1, level=1).copy()
             elif symbol in df.columns.get_level_values(0).unique():
                 df = df.xs(symbol, axis=1, level=0).copy()
-        
+
+        # Compute daily structural levels
+        levels = compute_daily_levels(symbol)
+        if levels is None:
+            return symbol, "NO DATA", "Cannot compute daily levels", "-"
+
+        # Compute HA
         ha = heiken_ashi(df)
         ha["E20"] = ema(ha["HA_C"], 20)
         ha["RSI"] = rsi(ha["HA_C"], 14)
-        
+
         lat = ha.iloc[-1]
+        prev = ha.iloc[-2] if len(ha) >= 2 else lat
         price = df["Close"].iloc[-1]
+        ha_close = lat["HA_C"]
+        ha_prev = prev["HA_C"]
         e20_1h = lat["E20"]
-        rsi_1h = lat["RSI"]
-        
-        # Distance from 1H EMA20
-        d1h = dist(price, e20_1h)
-        
-        # Latest HA candle direction
-        ha_bullish = lat["HA_C"] > lat["HA_O"]
-        
-        # Classify entry quality
-        if pd.isna(rsi_1h) or pd.isna(e20_1h):
-            return symbol, "Neutral", "-", "-"
-        
-        if rsi_1h < 30 and d1h < 0:
-            entry = "BUY NOW"
-            detail = f"1H RSI {rsi_1h:.0f} oversold + pullback"
-            zone = f"{e20_1h:.2f}-{price:.2f}"
-        elif abs(d1h) < 0.5 and ha_bullish:
-            entry = "BUY NOW"
-            detail = f"At 1H EMA20 support + bullish candle"
-            zone = f"{e20_1h:.2f}-{price:.2f}"
-        elif d1h > 0 and d1h < 1.5 and ha_bullish:
-            entry = "WATCH"
-            detail = f"Near 1H EMA20 (+{d1h:.1f}%), trending up"
-            zone = f"{e20_1h:.2f}-{price:.2f}"
-        elif d1h >= 1.5:
-            entry = "WAIT"
-            detail = f"Extended +{d1h:.1f}% above 1H EMA20, wait for pullback"
-            zone = f"{e20_1h:.2f}-{price:.2f}"
-        elif rsi_1h > 70:
-            entry = "WAIT"
-            detail = f"1H RSI {rsi_1h:.0f} overbought, wait for dip"
-            zone = f"{e20_1h:.2f}-{price:.2f}"
-        elif d1h < -0.5:
-            entry = "WATCH"
-            detail = f"Below 1H EMA20 ({d1h:.1f}%), waiting for re-entry"
-            zone = f"{e20_1h:.2f}-{e20_1h*(1.005):.2f}"
-        else:
-            entry = "Neutral"
-            detail = f"1H RSI {rsi_1h:.0f}, d={d1h:.1f}%"
-            zone = f"{e20_1h:.2f}-{price:.2f}"
-        
-        return symbol, entry, detail, zone
+        rsi_val = lat["RSI"]
+        ha_bullish = ha_close > lat["HA_O"]
+
+        # ADX/DMI from raw 1H data
+        adx_val, di_plus, di_minus = adx_dmi(df["High"], df["Low"], df["Close"])
+
+        # Trend conditions (matching Pine Script logic)
+        bull_trend = (
+            ha_close > e20_1h and
+            di_plus > di_minus and
+            adx_val > ADX_THRESHOLD and
+            rsi_val < RSI_EXTREME_LONG
+        )
+        bear_trend = (
+            ha_close < e20_1h and
+            di_minus > di_plus and
+            adx_val > ADX_THRESHOLD and
+            rsi_val > RSI_EXTREME_SHORT
+        )
+
+        # Level values
+        buy_rev = levels["buy_reversal"]
+        sell_rev = levels["sell_reversal"]
+        brkout = levels["breakout"]
+        brkdown = levels["breakdown"]
+        pivot = levels["pivot"]
+        daily_atr_val = levels["daily_atr"]
+
+        # Check signals
+        signal = "NEUTRAL"
+        detail_parts = []
+
+        # Buy Reversal: HA close touches/below buyReversal level + bull trend
+        buy_rev_touch = ha_close <= buy_rev
+        if buy_rev_touch and bull_trend:
+            signal = "BUY-R"
+            detail_parts.append(f"Reversal touch {buy_rev:.2f}")
+            detail_parts.append(f"ADX {adx_val:.1f} DI+ {di_plus:.1f}")
+
+        # Buy Breakout: HA close crosses above breakout level + bull trend
+        buy_breakout = ha_close > brkout and ha_prev <= brkout
+        if buy_breakout and bull_trend:
+            signal = "BUY-B"
+            detail_parts.append(f"Breakout above {brkout:.2f}")
+            detail_parts.append(f"ADX {adx_val:.1f} DI+ {di_plus:.1f}")
+
+        # Sell Reversal: HA close touches/above sellReversal level + bear trend
+        sell_rev_touch = ha_close >= sell_rev
+        if sell_rev_touch and bear_trend:
+            signal = "SELL-R"
+            detail_parts.append(f"Reversal touch {sell_rev:.2f}")
+            detail_parts.append(f"ADX {adx_val:.1f} DI- {di_minus:.1f}")
+
+        # Sell Breakdown: HA close crosses below breakdown level + bear trend
+        sell_breakdown = ha_close < brkdown and ha_prev >= brkdown
+        if sell_breakdown and bear_trend:
+            signal = "SELL-B"
+            detail_parts.append(f"Breakdown below {brkdown:.2f}")
+            detail_parts.append(f"ADX {adx_val:.1f} DI- {di_minus:.1f}")
+
+        # Build detail fallback
+        if not detail_parts:
+            if bull_trend:
+                detail_parts.append(f"Bullish ADX {adx_val:.1f} no level touch")
+            elif bear_trend:
+                detail_parts.append(f"Bearish ADX {adx_val:.1f} no level touch")
+            else:
+                detail_parts.append(f"ADX {adx_val:.1f} no clear trend")
+
+        # Levels string for dashboard
+        level_str = (f"P:{pivot:.0f} BR:{buy_rev:.0f} SR:{sell_rev:.0f} "
+                     f"BO:{brkout:.0f} BD:{brkdown:.0f} ATR:{daily_atr_val:.1f}")
+
+        return symbol, signal, " | ".join(detail_parts), level_str
+
     except Exception as e:
-        return symbol, "Error", str(e)[:60], "-"
+        return symbol, "NO DATA", str(e)[:80], "-"
+
 
 # ─── DATA DOWNLOAD ───────────────────────────────────────────────────
 def download_data(symbols):
@@ -386,7 +560,7 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
     mode = "EARLY BREAKOUT" if early_mode else "STANDARD"
     print("="*70)
     print(f"  NSE SWING SCANNER — {mode} — {dt.strftime('%Y-%m-%d %H:%M')} IST")
-    print(f"  {'1H Entry Analysis: ON' if analyze_1h_mode else '1H Analysis: OFF'}")
+    print(f"  {'1H TV-Style Analysis: ON' if analyze_1h_mode else '1H Analysis: OFF'}")
     print("="*70)
 
     # Step 1: Download daily data
@@ -405,24 +579,24 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
 
     # Step 3: 1H Entry Analysis (parallel)
     if analyze_1h_mode and results:
-        print(f"\n[3/4] 1-Hour Entry Analysis ({len(results)} stocks, parallel)...")
+        print(f"\n[3/4] 1-Hour TV-Style Analysis ({len(results)} stocks, parallel)...")
         syms_1h = [r["Symbol"] + ".NS" for r in results]
         results_map = {r["Symbol"]: r for r in results}
-        
+
         with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
             fut = {ex.submit(analyze_1h, s): s for s in syms_1h}
             done = 0
             for f in as_completed(fut):
-                sym, entry, detail, zone = f.result()
+                sym, signal, detail, zone = f.result()
                 base = strip_ns(sym)
                 if base in results_map:
-                    results_map[base]["1H_Setup"] = entry
+                    results_map[base]["1H_Setup"] = signal
                     results_map[base]["1H_Detail"] = detail
                     results_map[base]["1H_Zone"] = zone
                 done += 1
                 if done % 5 == 0 or done == len(syms_1h):
                     print(f"  {done}/{len(syms_1h)} analyzed")
-        
+
         results = list(results_map.values())
 
     # Step 4: Rank & Export
@@ -450,7 +624,7 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
     tag = "early" if early_mode else "swing"
     csv_path = os.path.join(output_dir, f"watchlist_{tag}_{ds}.csv")
     xlsx_path = os.path.join(output_dir, f"watchlist_{tag}_{ds}.xlsx")
-    
+
     # Also save with old naming for backward compatibility
     old_csv_path = os.path.join(output_dir, f"swing_watchlist_{ds}.csv")
     try:
@@ -460,29 +634,26 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
 
     df_out.to_csv(csv_path, index=False)
     print(f"  ✅ CSV: {csv_path}")
-    
+
     # Excel with 4 sheets
     try:
         with pd.ExcelWriter(xlsx_path, engine="openpyxl") as w:
-            # Sheet 1: Full Watchlist
             df_out.to_excel(w, sheet_name="Watchlist", index=False)
-            
-            # Sheet 2: Top 20
             df_out.head(20).to_excel(w, sheet_name="Top_20", index=False)
-            
+
             # Sheet 3: Pivot by Entry Quality
             if "1H_Setup" in df_out.columns:
-                quality_order = ["BUY NOW", "WATCH", "WAIT", "Neutral", "No 1H Data", "Error"]
+                quality_order = ["BUY-R", "BUY-B", "SELL-R", "SELL-B", "NEUTRAL", "NO DATA"]
                 df_pivot = df_out.copy()
-                df_pivot["Quality"] = pd.Categorical(df_pivot["1H_Setup"], 
-                                                      categories=quality_order, ordered=True)
+                df_pivot["Quality"] = pd.Categorical(
+                    df_pivot["1H_Setup"], categories=quality_order, ordered=True)
                 pivot_cols = ["#","Quality","1H_Detail","1H_Zone","Symbol","Sector",
                               "Price","D_E20","Stage","Trend","Entry","Stop","R:R"]
                 pivot_cols = [c for c in pivot_cols if c in df_pivot.columns]
                 df_pivot = df_pivot.sort_values(["Quality","Rank"]).reset_index(drop=True)
                 df_pivot.insert(0, "Q#", range(1, len(df_pivot)+1))
                 df_pivot.to_excel(w, sheet_name="By_Entry_Quality", index=False)
-            
+
             # Sheet 4: Fresh Breakouts & Near Misses
             if "Stage" in df_out.columns:
                 fresh = df_out[df_out["Stage"].isin(["Fresh Breakout","Strong Momentum"])]
@@ -493,16 +664,18 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
                     combined = fresh
                 if not combined.empty:
                     combined.to_excel(w, sheet_name="Fresh_Actionable", index=False)
-            
-        print(f"  ✅ XLSX: {xlsx_path} (4 sheets: Watchlist, Top_20, By_Entry_Quality, Fresh_Actionable)")
+
+        print(f"  ✅ XLSX: {xlsx_path} (4 sheets)")
     except Exception as e:
         print(f"  ⚠ Excel: {e}")
 
     # Summary
     total = len(df_out)
-    buy_now = len(df_out[df_out["1H_Setup"]=="BUY NOW"]) if "1H_Setup" in df_out.columns else 0
-    watch = len(df_out[df_out["1H_Setup"]=="WATCH"]) if "1H_Setup" in df_out.columns else 0
-    wait = len(df_out[df_out["1H_Setup"]=="WAIT"]) if "1H_Setup" in df_out.columns else 0
+    buy_r = len(df_out[df_out["1H_Setup"]=="BUY-R"]) if "1H_Setup" in df_out.columns else 0
+    buy_b = len(df_out[df_out["1H_Setup"]=="BUY-B"]) if "1H_Setup" in df_out.columns else 0
+    sell_r = len(df_out[df_out["1H_Setup"]=="SELL-R"]) if "1H_Setup" in df_out.columns else 0
+    sell_b = len(df_out[df_out["1H_Setup"]=="SELL-B"]) if "1H_Setup" in df_out.columns else 0
+    neutral = len(df_out[df_out["1H_Setup"]=="NEUTRAL"]) if "1H_Setup" in df_out.columns else 0
     fresh = len(df_out[df_out["Stage"]=="Fresh Breakout"]) if "Stage" in df_out.columns else 0
     near = len(df_out[df_out["Trend"]=="Near Miss"]) if "Trend" in df_out.columns else 0
 
@@ -511,12 +684,12 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
     print(f"{'='*70}")
     print(f"  Total: {total}  |  Fresh Breakouts: {fresh}  |  Near Miss: {near}")
     if analyze_1h_mode:
-        print(f"  Entry: BUY NOW {buy_now} | WATCH {watch} | WAIT {wait}")
+        print(f"  BUY-R: {buy_r} | BUY-B: {buy_b} | SELL-R: {sell_r} | SELL-B: {sell_b} | Neutral: {neutral}")
     print(f"{'='*70}")
 
     if not df_out.empty:
         print(f"\n  TOP 5:")
-        print(f"  {'#':<4} {'Symbol':<14} {'Stage':<18} {'Price':<9} {'1H_Setup':<12} {'R:R':<10}")
+        print(f"  {'#':<4} {'Symbol':<14} {'Stage':<18} {'Price':<9} {'1H_Signal':<12} {'R:R':<10}")
         print(f"  {'-'*68}")
         for _, r in df_out.head(5).iterrows():
             s = r.get("Stage","-")
