@@ -226,6 +226,7 @@ let currentFilter = 'all';
 let currentPFilter = 'active';
 let currentPositions = [];
 const POLL_INTERVAL = 3000;
+const MAX_POLL_ATTEMPTS = 300;
 let portfolioTimer = null;
 
 // ─── Init ──────────────────────────────────────────────────────────
@@ -301,7 +302,7 @@ async function pollStatus(taskId) {
   const progressText = document.getElementById('progressText');
   const progressFill = document.getElementById('progressFill');
   let attempts = 0;
-  const maxAttempts = 120;
+  const maxAttempts = MAX_POLL_ATTEMPTS;
   const poll = async () => {
     attempts++;
     try {
