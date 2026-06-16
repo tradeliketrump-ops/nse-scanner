@@ -91,8 +91,7 @@ tr:hover td { background:rgba(0,212,170,0.05); }
 
   <!-- Actions -->
   <div class="card" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-    <button class="btn btn-primary" id="btnScan" onclick="startScan()">🔄 Run Scan (Std)</button>
-    <button class="btn btn-secondary" id="btnScanEarly" onclick="startScan(true)">🔄 Run Scan (Early)</button>
+    <button class="btn btn-primary" id="btnScan" onclick="startScan()">🔄 Run Scan</button>
     <a class="btn btn-secondary btn-sm" id="btnDownload" href="#" onclick="downloadLatest(event)" style="display:none">📥 Download Excel</a>
   </div>
 
@@ -278,21 +277,21 @@ async function loadExistingData() {
 }
 
 // ─── Start Scan ────────────────────────────────────────────────────
-async function startScan(early = false) {
-  const btn = early ? document.getElementById('btnScanEarly') : document.getElementById('btnScan');
+async function startScan() {
+  const btn = document.getElementById('btnScan');
   btn.disabled = true;
   btn.textContent = '⏳ Scanning...';
   document.getElementById('progressCard').style.display = 'block';
   document.getElementById('progressFill').style.width = '5%';
   document.getElementById('progressText').textContent = 'Starting scan...';
   try {
-    const r = await fetch(`/api/scan/start?early=${early}`, { method:'POST' });
+    const r = await fetch('/api/scan/start?early=false', { method:'POST' });
     const d = await r.json();
     pollStatus(d.task_id);
   } catch(e) {
     document.getElementById('progressText').textContent = 'Error: ' + e.message;
     btn.disabled = false;
-    btn.textContent = early ? '🔄 Run Scan (Early)' : '🔄 Run Scan (Std)';
+    btn.textContent = '🔄 Run Scan';
   }
 }
 
@@ -312,9 +311,7 @@ async function pollStatus(taskId) {
         progressFill.style.width = '100%';
         progressText.textContent = '✅ ' + d.progress;
         document.getElementById('btnScan').disabled = false;
-        document.getElementById('btnScan').textContent = '🔄 Run Scan (Std)';
-        document.getElementById('btnScanEarly').disabled = false;
-        document.getElementById('btnScanEarly').textContent = '🔄 Run Scan (Early)';
+        document.getElementById('btnScan').textContent = '🔄 Run Scan';
         if (d.has_results) loadResults(taskId);
         return;
       }
@@ -323,9 +320,7 @@ async function pollStatus(taskId) {
         progressFill.style.background = '#e74c3c';
         progressText.textContent = '❌ ' + (d.progress || 'Error');
         document.getElementById('btnScan').disabled = false;
-        document.getElementById('btnScan').textContent = '🔄 Run Scan (Std)';
-        document.getElementById('btnScanEarly').disabled = false;
-        document.getElementById('btnScanEarly').textContent = '🔄 Run Scan (Early)';
+        document.getElementById('btnScan').textContent = '🔄 Run Scan';
         return;
       }
       const p = d.progress || '';
@@ -342,9 +337,7 @@ async function pollStatus(taskId) {
       else {
         progressText.textContent = '⏰ Timed out.';
         document.getElementById('btnScan').disabled = false;
-        document.getElementById('btnScan').textContent = '🔄 Run Scan (Std)';
-        document.getElementById('btnScanEarly').disabled = false;
-        document.getElementById('btnScanEarly').textContent = '🔄 Run Scan (Early)';
+        document.getElementById('btnScan').textContent = '🔄 Run Scan';
       }
     } catch(e) {
       progressText.textContent = 'Connection error: ' + e.message;
