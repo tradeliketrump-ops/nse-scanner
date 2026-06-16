@@ -37,7 +37,7 @@ EARNINGS_EXCLUSION  = 28
 BREAKOUT_LOOKBACK   = 30
 NEAR_MISS_PCT       = 0.5
 PARALLEL_WORKERS    = 10  # for 1H analysis
-HOURS_LOOKBACK      = 5   # days of 1H data
+HOURS_LOOKBACK      = 10  # days of 1H data (need 33+ bars for ADX/DMI)
 
 # ─── PINE SCRIPT TV-LEVEL CONSTANTS ────────────────────────────────
 SELL_REV_MULT   = 0.29   # sellReversal = pivot + dailyATR * 0.29
