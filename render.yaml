@@ -6,6 +6,10 @@ services:
     startCommand: uvicorn nse_scanner_api:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     autoDeploy: true
+    disk:
+      name: trade-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0

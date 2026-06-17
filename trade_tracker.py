@@ -28,6 +28,13 @@ MARKET_OPEN_MIN = 30
 MARKET_CLOSE_HOUR = 15
 MARKET_CLOSE_MIN = 30
 
+# Persistent storage path (Render disk or local fallback)
+if os.path.exists("/data"):     # Render persistent disk
+    DATA_DIR = "/data"
+else:                           # Local development
+    DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+TRADES_JSON_PATH = os.path.join(DATA_DIR, "trades_history.json")
+
 # ─── Position Status ────────────────────────────────────────────────
 STATUS_PENDING_ENTRY = "pending_entry"
 STATUS_ACTIVE = "active"
@@ -597,10 +604,12 @@ class TradeTracker:
 _default_tracker = None
 
 
-def get_tracker(json_path: str = "trades_history.json") -> TradeTracker:
-    """Get or create the default TradeTracker instance."""
+def get_tracker(json_path: str = None) -> TradeTracker:
+    """Get or create the default TradeTracker instance. Uses persistent storage."""
     global _default_tracker
     if _default_tracker is None:
+        if json_path is None:
+            json_path = TRADES_JSON_PATH
         _default_tracker = TradeTracker(json_path)
     return _default_tracker
 
