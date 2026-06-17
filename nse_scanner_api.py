@@ -34,6 +34,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nse_swing_scanner import run_scanner, NSE_SYMBOLS, get_nse_symbols
 from trade_tracker import TradeTracker, get_tracker
+from futures_tracker import FuturesTracker, get_futures_tracker
 
 # Logger
 logging.basicConfig(level=logging.INFO)
@@ -692,6 +693,157 @@ def service_worker():
     if SW_PATH.exists():
         return Response(SW_PATH.read_text(), media_type="application/javascript")
     return Response("", media_type="application/javascript")
+
+
+# ─── Futures Tab API ───────────────────────────────────────────────
+# Month codes for futures contract rollover
+FUT_MONTH_CODES = {1:'JAN',2:'FEB',3:'MAR',4:'APR',5:'MAY',6:'JUN',
+                    7:'JUL',8:'AUG',9:'SEP',10:'OCT',11:'NOV',12:'DEC'}
+
+def get_futures_month():
+    """Return the active futures contract month based on date.
+    1st-15th → current month, 16th+ → next month."""
+    from datetime import datetime
+    now = datetime.now()
+    if now.day <= 15:
+        fut_month = now.month
+        fut_year = now.year
+    else:
+        fut_month = now.month + 1 if now.month < 12 else 1
+        fut_year = now.year + 1 if now.month == 12 else now.year
+    return fut_month, fut_year
+
+FUTURES_CONFIG = [
+    # (yfinance_symbol, display_name, category, exchange)
+    # NSE Index
+    ("^NSEI", "Nifty 50", "NSE Index", "NSE"),
+    ("^NSEBANK", "Bank Nifty", "NSE Index", "NSE"),
+    # Bullion
+    ("GC=F", "Gold", "Bullion", "COMEX"),
+    ("SI=F", "Silver", "Bullion", "COMEX"),
+    ("MGC=F", "Gold Micro", "Bullion", "COMEX"),
+    ("SIL=F", "Silver Micro", "Bullion", "COMEX"),
+    # Energy
+    ("CL=F", "Crude Oil WTI", "Energy", "NYMEX"),
+    ("NG=F", "Natural Gas", "Energy", "NYMEX"),
+    # Base Metals
+    ("HG=F", "Copper", "Base Metals", "COMEX"),
+    ("ALI=F", "Aluminum", "Base Metals", "LME"),
+    ("ZNC=F", "Zinc", "Base Metals", "LME"),
+    # Precious
+    ("PL=F", "Platinum", "Precious", "NYMEX"),
+    ("PA=F", "Palladium", "Precious", "NYMEX"),
+]
+
+
+@app.get("/api/futures/prices")
+def futures_prices():
+    """Fetch live prices for all futures instruments with contract month info."""
+    import yfinance as yf
+    import numpy as np
+    
+    fut_month, fut_year = get_futures_month()
+    month_name = FUT_MONTH_CODES.get(fut_month, "?")
+    contract_label = f"{month_name}-{fut_year}"
+    
+    results = []
+    for symbol, name, category, exchange in FUTURES_CONFIG:
+        try:
+            df = yf.download(symbol, period="5d", interval="1d", progress=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                tickers = df.columns.get_level_values(1).unique()
+                if len(tickers) > 0:
+                    df = df.xs(tickers[0], axis=1, level=1).copy()
+            if df is not None and len(df) > 0 and "Close" in df.columns:
+                close = float(df["Close"].iloc[-1]) if pd.notna(df["Close"].iloc[-1]) else 0
+                change = 0.0
+                change_pct = 0.0
+                prev_close = close
+                if len(df) >= 2:
+                    prev = df["Close"].iloc[-2]
+                    if pd.notna(prev):
+                        prev_close = float(prev)
+                        change = round(close - prev_close, 2)
+                        change_pct = round(change / prev_close * 100, 2) if prev_close != 0 else 0.0
+                results.append({
+                    "symbol": symbol,
+                    "name": name,
+                    "category": category,
+                    "exchange": exchange,
+                    "price": round(close, 2),
+                    "change": change,
+                    "change_pct": change_pct,
+                    "contract": contract_label,
+                    "status": "ok",
+                })
+            else:
+                results.append({"symbol": symbol, "name": name, "category": category, "price": 0, "status": "nodata"})
+        except Exception as e:
+            results.append({"symbol": symbol, "name": name, "category": category, "price": 0, "status": "error", "error": str(e)[:50]})
+    
+    return {
+        "count": len(results),
+        "contract_month": contract_label,
+        "results": results,
+    }
+
+
+@app.post("/api/futures/start")
+def futures_start(symbol: str = Query(..., description="Yahoo symbol like ^NSEI, GC=F"),
+                  name: str = Query("", description="Display name"),
+                  category: str = Query("", description="Category"),
+                  price: float = Query(0, description="Signal price")):
+    """Start a futures position (1 Qty). Same-day entry during market hours, else pending."""
+    tracker = get_futures_tracker()
+    now = datetime.now()
+    hour = now.hour
+    # Market hours approx 9:15 AM - 3:30 PM IST, weekday check
+    is_market_hours = (now.weekday() < 5 and 
+                       ((hour == 9 and 15 <= now.minute) or 
+                        (10 <= hour <= 14) or
+                        (hour == 15 and now.minute <= 30)))
+    same_day = is_market_hours
+    
+    pos_id = tracker.create_position(symbol, name or symbol, category, price, 
+                                      same_day=same_day)
+    return {"position_id": pos_id, "symbol": symbol, "same_day_entry": same_day, "quantity": 1}
+
+
+@app.post("/api/futures/close")
+def futures_close(position_id: str = Query(..., description="Position ID to close"),
+                   reason: str = "manual"):
+    """Close a futures position manually."""
+    tracker = get_futures_tracker()
+    result = tracker.close_position(position_id, reason)
+    if result:
+        return {"status": "closed", "position": result}
+    raise HTTPException(404, "Position not found or not active")
+
+
+@app.get("/api/futures/positions")
+def futures_positions(status: str = Query("all", description="Filter: all, pending_entry, active, closed")):
+    """Get futures positions."""
+    tracker = get_futures_tracker()
+    status_filter = status if status != "all" else None
+    positions = tracker.get_positions(status_filter)
+    return {"count": len(positions), "positions": positions}
+
+
+@app.get("/api/futures/portfolio")
+def futures_portfolio():
+    """Get futures portfolio summary."""
+    tracker = get_futures_tracker()
+    summary = tracker.get_portfolio_summary()
+    return summary
+
+
+@app.post("/api/futures/refresh")
+def futures_refresh():
+    """Refresh prices for all open futures positions."""
+    tracker = get_futures_tracker()
+    result = tracker.refresh_all_prices()
+    activated = tracker.process_pending_entries()
+    return {"updated": result["updated"], "failed": result["failed"], "activated": len(activated)}
 
 
 # ─── Debug endpoint ─────────────────────────────────────────────────
