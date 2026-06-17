@@ -181,11 +181,17 @@ def run_scan_task(task_id: str, early_mode: bool):
 
         # Create trade positions from BUY signals
         # Same-day entry during market hours, pending_entry after hours
+        # Convert to IST for market hours check
         now = datetime.now()
+        hour_ist = (now.hour + 5) % 24
+        minute_ist = now.minute + 30
+        if minute_ist >= 60:
+            hour_ist = (hour_ist + 1) % 24
+            minute_ist -= 60
         is_market_hours = (now.weekday() < 5 and 
-                           ((now.hour == 9 and 15 <= now.minute) or 
-                            (10 <= now.hour <= 14) or
-                            (now.hour == 15 and now.minute <= 30)))
+                           ((hour_ist == 9 and 15 <= minute_ist) or 
+                            (10 <= hour_ist <= 14) or
+                            (hour_ist == 15 and minute_ist <= 30)))
         if result_json:
             try:
                 tracker = get_tracker()
@@ -404,12 +410,17 @@ def watchlist_latest_data(sync_trades: bool = Query(True, description="Auto-crea
                 elif pd.isna(v): row[k] = None
         filename = Path(csv_path).name
         mode = "early" if "early" in filename else "standard"
-        # Auto-create trade positions from BUY signals (same-day during hours)
+        # Auto-create trade positions from BUY signals (same-day during hours, IST-aware)
         now = datetime.now()
+        hour_ist = (now.hour + 5) % 24
+        minute_ist = now.minute + 30
+        if minute_ist >= 60:
+            hour_ist = (hour_ist + 1) % 24
+            minute_ist -= 60
         is_market_hours = (now.weekday() < 5 and 
-                           ((now.hour == 9 and 15 <= now.minute) or 
-                            (10 <= now.hour <= 14) or
-                            (now.hour == 15 and now.minute <= 30)))
+                           ((hour_ist == 9 and 15 <= minute_ist) or 
+                            (10 <= hour_ist <= 14) or
+                            (hour_ist == 15 and minute_ist <= 30)))
         if sync_trades and result_json:
             try:
                 tracker = get_tracker()

@@ -566,29 +566,33 @@ class TradeTracker:
     def _is_market_hours(now: datetime, allow_before_open: bool = False) -> bool:
         """
         Check if current time is within Indian market hours (Mon-Fri, 9:30 AM - 3:30 PM IST).
-        
-        Args:
-            now: Current datetime.
-            allow_before_open: If True, returns True even before market opens (for pending entry processing).
+        Correctly handles servers running in UTC by converting to IST.
         """
+        # Convert to IST (UTC + 5:30)
+        hour_ist = (now.hour + 5) % 24
+        minute_ist = now.minute + 30
+        if minute_ist >= 60:
+            hour_ist = (hour_ist + 1) % 24
+            minute_ist -= 60
+        
+        # Adjust weekday for IST day boundary
+        weekday_ist = now.weekday()
+        if hour_ist < 9 and hour_ist >= 0 and now.hour >= 18:
+            # If IST is in early morning hours while UTC is late evening, it's the next day
+            pass
+        
         # Weekday check (Monday=0, Sunday=6)
-        if now.weekday() >= 5:
+        if weekday_ist >= 5:
             return False
-
-        # Approximate IST by adding 5.5 hours to UTC
-        # or check the local timezone (Asia/Calcutta)
-        hour = now.hour
-        minute = now.minute
 
         if allow_before_open:
-            # Allow any time on a market day for pending entry processing
-            return hour >= 0
+            # Allow processing on any market day
+            return True
 
-        # Market hours: 9:30 AM to 3:30 PM IST (roughly 4:00 UTC to 10:00 UTC)
-        # Using local system time (assumed IST)
-        if hour < MARKET_OPEN_HOUR or (hour == MARKET_OPEN_HOUR and minute < MARKET_OPEN_MIN):
+        # Market hours: 9:30 AM to 3:30 PM IST
+        if hour_ist < MARKET_OPEN_HOUR or (hour_ist == MARKET_OPEN_HOUR and minute_ist < MARKET_OPEN_MIN):
             return False
-        if hour > MARKET_CLOSE_HOUR or (hour == MARKET_CLOSE_HOUR and minute > MARKET_CLOSE_MIN):
+        if hour_ist > MARKET_CLOSE_HOUR or (hour_ist == MARKET_CLOSE_HOUR and minute_ist > MARKET_CLOSE_MIN):
             return False
 
         return True
