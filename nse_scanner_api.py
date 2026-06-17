@@ -180,10 +180,16 @@ def run_scan_task(task_id: str, early_mode: bool):
         xlsx_path = OUTPUT_DIR / f"watchlist_{tag}_{date_str}.xlsx"
 
         # Create trade positions from BUY signals
+        # Same-day entry during market hours, pending_entry after hours
+        now = datetime.now()
+        is_market_hours = (now.weekday() < 5 and 
+                           ((now.hour == 9 and 15 <= now.minute) or 
+                            (10 <= now.hour <= 14) or
+                            (now.hour == 15 and now.minute <= 30)))
         if result_json:
             try:
                 tracker = get_tracker()
-                created = tracker.create_positions_from_results(result_json)
+                created = tracker.create_positions_from_results(result_json, same_day_entry=is_market_hours)
                 if created:
                     logger.info(f"Created {len(created)} trade positions from BUY signals: {created}")
                     tasks[task_id]["progress"] = f"Scan complete. {len(result_json)} stocks found. {len(created)} trades created."
@@ -398,11 +404,16 @@ def watchlist_latest_data(sync_trades: bool = Query(True, description="Auto-crea
                 elif pd.isna(v): row[k] = None
         filename = Path(csv_path).name
         mode = "early" if "early" in filename else "standard"
-        # Auto-create trade positions from BUY signals
+        # Auto-create trade positions from BUY signals (same-day during hours)
+        now = datetime.now()
+        is_market_hours = (now.weekday() < 5 and 
+                           ((now.hour == 9 and 15 <= now.minute) or 
+                            (10 <= now.hour <= 14) or
+                            (now.hour == 15 and now.minute <= 30)))
         if sync_trades and result_json:
             try:
                 tracker = get_tracker()
-                created = tracker.create_positions_from_results(result_json)
+                created = tracker.create_positions_from_results(result_json, same_day_entry=is_market_hours)
                 if created:
                     logger.info(f"Auto-created {len(created)} positions from CSV: {created}")
             except Exception as trade_e:
