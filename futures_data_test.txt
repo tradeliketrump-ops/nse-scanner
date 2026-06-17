@@ -1,0 +1,28 @@
+============================================================
+TESTING FUTURES DATA SOURCES
+============================================================
+
+Symbol               Name                           Status   Close       
+----------------------------------------------------------------------
+^NSEI                Nifty 50 Index                 OK       23989.15    
+^NSEBANK             Bank Nifty Index               OK       57297.15    
+^CNXIT               Nifty IT Index                 OK       28568.10    
+^BSESN               Sensex                         OK       76808.48    
+GC=F                 Gold Futures                   OK       4361.30     
+SI=F                 Silver Futures                 OK       70.46       
+MGC=F                Gold Micro Futures             OK       4361.60     
+SIL=F                Silver Micro Futures           OK       70.46       
+CL=F                 Crude Oil WTI                  OK       75.39       
+NG=F                 Natural Gas                    OK       3.25        
+HG=F                 Copper Futures                 OK       6.52        
+PL=F                 Platinum Futures               OK       1816.10     
+PA=F                 Palladium Futures              OK       1366.50     
+ALI=F                Aluminum Futures               OK       3396.25     
+ZNC=F                Zinc Futures                   OK       3660.00     
+GOLD=F               Gold (MCX attempt)             EMPTY   
+CRUDEOIL.F           Crude Oil (MCX attempt)        EMPTY   
+SOYBEAN.F            Soybean (NCDEX attempt)        EMPTY   
+
+============================================================
+OK: 15, Failed: 3
+============================================================

@@ -1,0 +1,16 @@
+============================================================
+TESTING FUTURES CONTRACT SYMBOLS
+Today: 2026-06-17 (day=17)
+Futures contract: N6 (7/2026)
+============================================================
+
+Symbol                    Name                           Status   Close       
+---------------------------------------------------------------------------
+^NSEI                     Nifty 50 Spot                  OK       23989.15     vol=327300
+^NSEBANK                  Bank Nifty Spot                OK       57297.15     vol=375400
+NIFTY=F                   Nifty Futures Cont             EMPTY   
+BANKNIFTY=F               Bank Nifty Futures Cont        EMPTY   
+NIFTYN6.NS                Nifty N6                       EMPTY   
+BANKNIFTYN6.NS            Bank Nifty N6                  EMPTY   
+NIFTY24N.NS               Nifty 24N                      EMPTY   
+SENSEX=F                  Sensex Futures Cont            EMPTY   

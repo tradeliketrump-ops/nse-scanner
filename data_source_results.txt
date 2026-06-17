@@ -1,0 +1,38 @@
+======================================================================
+TESTING MORE DATA SOURCES FOR INDIAN FUTURES
+Date: 2026-06-17 10:11
+======================================================================
+
+--- NSE India API (different endpoints) ---
+  ❌ /api/equity-stockIndices?index=NIFTY%2050: HTTP 404
+  ❌ /api/equity-stockIndices?index=NIFTY%20500: HTTP 404
+  ✅ /api/marketStatus: ['marketState', 'marketcap', 'giftnifty'] (last=?)
+  ❌ /api/liveAnalysis-variations?index=gainers&indices=NIFTY50: HTTP 404
+
+--- nsetools library ---
+nsetools imported OK
+Nifty Futures error: 'Nse' object has no attribute 'get_futures'
+
+--- yfinance NSE indices (verify) ---
+✅ yfinance Nifty Spot: 24062.20
+✅ yfinance Bank Nifty Spot: 57333.90
+✅ yfinance USD/INR: 94.32
+✅ yfinance Gold: $4344.30 (COMEX)
+✅ yfinance Silver: $70.01 (COMEX)
+✅ yfinance Crude: $75.09 (COMEX)
+✅ yfinance NatGas: $3.25 (COMEX)
+
+--- Web scraping commodityonline.com ---
+commodityonline: HTTP 403 (5638 chars)
+
+======================================================================
+CONCLUSION
+======================================================================
+NSE India API: NSE has changed their API endpoints - need updated paths
+nsepy/nsetools: SSL/connection issues with older NSE servers
+MCX: Cannot scrape from non-Indian IP
+yfinance: Only NSE spot indices + COMEX commodities (USD)
+
+BEST OPTION: Use yfinance + USD/INR conversion for commodities
+For Nifty Futures: Use spot price as proxy (difference is ~0.3-0.5%)
+======================================================================
