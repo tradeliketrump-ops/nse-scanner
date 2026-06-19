@@ -240,6 +240,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const urlParams = new URLSearchParams(window.location.search);
   const taskId = urlParams.get('task');
   if (taskId) pollStatus(taskId);
+  
+  // Auto-refresh every 5 minutes to sync with scheduler scans
+  setInterval(() => {
+    const activeTab = document.querySelector('.tab-btn.active');
+    if (activeTab) {
+      const tab = activeTab.getAttribute('data-tab');
+      if (tab === 'watchlist') {
+        loadExistingData();
+      } else if (tab === 'portfolio') {
+        loadPortfolioSummary();
+        loadPositions(currentPFilter);
+        loadSymbolStats();
+      }
+    }
+  }, 300000); // 5 minutes = 300,000 ms
 });
 
 // ─── Tab Switching ─────────────────────────────────────────────────
