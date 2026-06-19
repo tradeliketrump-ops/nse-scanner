@@ -168,10 +168,42 @@ class TradeTracker:
             if not symbol:
                 continue
 
-            pos_id = f"{symbol}-{signal_date}"
-            if pos_id in self.data["positions"]:
-                logger.debug(f"Position {pos_id} already exists, skipping")
+            # Check if there's ALREADY an active or pending position for this symbol
+            existing_pos = None
+            for pid, p in self.data["positions"].items():
+                if p.get("symbol") == symbol and p.get("status") in (STATUS_PENDING_ENTRY, STATUS_ACTIVE):
+                    existing_pos = p
+                    existing_pid = pid
+                    break
+            
+            if existing_pos:
+                # Update existing position with latest signal data instead of creating duplicate
+                sector = row.get("Sector", existing_pos.get("sector", "Unknown"))
+                signal_price = row.get("Price")
+                if signal_price is None:
+                    signal_price = row.get("signal_price", existing_pos.get("signal_price", 0))
+                signal_price = float(signal_price)
+                existing_pos["signal_price"] = signal_price
+                existing_pos["current_price"] = signal_price
+                existing_pos["entry_zone"] = row.get("Entry", existing_pos.get("entry_zone", ""))
+                existing_pos["suggested_stop"] = row.get("Stop", existing_pos.get("suggested_stop", ""))
+                existing_pos["rr"] = row.get("R:R", existing_pos.get("rr", ""))
+                existing_pos["sector"] = sector
+                # If still pending and market is open, activate it
+                if existing_pos["status"] == STATUS_PENDING_ENTRY and same_day_entry:
+                    existing_pos["entry_date"] = signal_date
+                    existing_pos["entry_price"] = signal_price
+                    existing_pos["stop_loss"] = round(signal_price * (1 - STOP_LOSS_PCT), 2)
+                    existing_pos["target"] = round(signal_price * (1 + PROFIT_TARGET_PCT), 2)
+                    existing_pos["quantity"] = max(1, int(CAPITAL_PER_POSITION / signal_price))
+                    existing_pos["status"] = STATUS_ACTIVE
+                    logger.info(f"Updated & activated existing pending: {existing_pid} @ ₹{signal_price}")
+                else:
+                    logger.info(f"Updated existing position: {existing_pid} @ ₹{signal_price}")
+                created.append(existing_pid)
                 continue
+
+            pos_id = f"{symbol}-{signal_date}"
 
             sector = row.get("Sector", "Unknown")
             signal_price = row.get("Price")
