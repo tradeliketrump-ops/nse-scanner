@@ -209,6 +209,7 @@ class _LazySymbolList:
 
 NSE_SYMBOLS = _LazySymbolList()
 NIFTY50_SYMBOL = "^NSEI"
+NIFTY_SPOT = "^NSEI"  # Nifty 50 Spot Index for FUT trading signals
 
 SECTOR_MAP = {
     "RELIANCE":"Oil & Gas","TCS":"IT","HDFCBANK":"Banking","ICICIBANK":"Banking",
@@ -629,6 +630,45 @@ def download_data(symbols):
 def process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max, mm, mv, early):
     base = strip_ns(sym)
     sector = get_sector(sym)
+    
+    # Special handling for Nifty 50 Index (skip stock-specific filters)
+    if sym == NIFTY_SPOT:
+        base = "NIFTY50"
+        sector = "Index"
+        try:
+            ha = heiken_ashi(df)
+            ha["E20"] = ema(ha["HA_C"], EMA_PERIOD)
+            ha["S50"] = sma(ha["HA_C"], SMA_PERIOD)
+            ha["RSI"] = rsi(ha["HA_C"], RSI_PERIOD)
+            lat = ha.iloc[-1]
+            lc, hc, e20, s50, rv = lat["Close"], lat["HA_C"], lat["E20"], lat["S50"], lat["RSI"]
+            if pd.isna(e20) or pd.isna(s50) or pd.isna(rv): return None
+            ds, c1, c2, c3, stage = detect_breakout(ha)
+            nmi, pa = get_nm_info(ha, e20, s50)
+            qualifies = c1 and c2 and c3
+            if not qualifies: return None
+            if use_rsi and (rv < rsi_min or rv > rsi_max): return None
+            hh = hh_hl(ha, PRICE_LOOKBACK)
+            lw = low_wick(ha)
+            vs, vr = vol_spike(df["Volume"], VOLUME_LOOKBACK)
+            sr = df["Close"].pct_change().dropna()
+            rs = rel_strength(sr, nr)
+            return {
+                "Rank": 0, "Symbol": base, "Sector": sector,
+                "Price": round(lc, 2), "Mcap_Cr": 0, "Avg_Vol": 0,
+                "EMA20": round(e20, 2), "SMA50": round(s50, 2),
+                "D_E20": round(dist(lc, e20), 2), "D_S50": round(dist(lc, s50), 2),
+                "RS": round(rs, 2), "RSI": round(rv, 2),
+                "V_Spike": "Yes" if vs else "No", "V_Ratio": round(vr, 2),
+                "HH_HL": hh, "L_Wick": lw,
+                "C1": "Yes" if c1 else "No", "C2": "Yes" if c2 else "No", "C3": "Yes" if c3 else "No",
+                "Days_Since": ds, "Stage": stage, "Near_Miss": nmi,
+                "Trend": "Bullish" if qualifies else ("Near Miss" if sum([c1,c2,c3])>=2 else "Building"),
+                "Entry": "-", "Stop": "-", "R:R": "1:3",
+                "1H_Setup": "", "1H_Detail": "", "1H_Zone": "",
+            }
+        except Exception:
+            return None
     try:
         ha = heiken_ashi(df)
         ha["E20"] = ema(ha["HA_C"], EMA_PERIOD)
@@ -689,9 +729,15 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
     print(f"  {'1H TV-Style Analysis: ON' if analyze_1h_mode else '1H Analysis: OFF'}")
     print("="*70)
 
-    # Step 1: Download daily data
-    print(f"\n[1/4] Downloading {len(symbols)} stocks (Daily)...")
-    stock_data, failed, nr = download_data(symbols)
+    # Step 1: Download daily data (include Nifty 50 index)
+    if symbols is not None:
+        symbols_list = list(symbols) if hasattr(symbols, '__iter__') else list(symbols)
+    else:
+        symbols_list = list(NSE_SYMBOLS)
+    if NIFTY_SPOT not in symbols_list:
+        symbols_list.append(NIFTY_SPOT)
+    print(f"\n[1/4] Downloading {len(symbols_list)} stocks + Nifty50 (Daily)...")
+    stock_data, failed, nr = download_data(symbols_list)
     print(f"  Loaded: {len(stock_data)}, Failed: {len(failed)}")
 
     # Step 2: Screen

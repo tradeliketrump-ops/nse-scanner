@@ -159,16 +159,25 @@ class TradeTracker:
 
     @staticmethod
     def fetch_price(symbol: str, date_str: Optional[str] = None) -> Optional[float]:
+        """Fetch price for a stock or index. NIFTY50 uses ^NSEI."""
         try:
+            # Determine the yfinance symbol
+            if symbol == "NIFTY50":
+                yf_sym = "^NSEI"
+            else:
+                yf_sym = symbol if symbol.endswith(".NS") else symbol + ".NS"
+            
             if date_str:
                 dt = datetime.strptime(date_str, "%Y-%m-%d")
                 start = (dt - timedelta(days=5)).strftime("%Y-%m-%d")
                 end = (dt + timedelta(days=2)).strftime("%Y-%m-%d")
-                df = yf.download(symbol + ".NS", start=start, end=end, progress=False, auto_adjust=True)
+                df = yf.download(yf_sym, start=start, end=end, progress=False, auto_adjust=True)
                 if df.empty:
                     return None
                 if isinstance(df.columns, pd.MultiIndex):
-                    df = df.xs(symbol + ".NS", axis=1, level=1) if symbol + ".NS" in df.columns.get_level_values(1).unique() else df.xs(symbol, axis=1, level=0)
+                    tickers = df.columns.get_level_values(1).unique()
+                    if len(tickers) > 0:
+                        df = df.xs(tickers[0], axis=1, level=1).copy()
                 target_dt = pd.Timestamp(date_str)
                 if target_dt in df.index:
                     row = df.loc[target_dt]
@@ -181,11 +190,13 @@ class TradeTracker:
                         return float(open_price) if pd.notna(open_price) else None
                 return None
             else:
-                df = yf.download(symbol + ".NS", period="5d", interval="1d", progress=False, auto_adjust=True)
+                df = yf.download(yf_sym, period="5d", interval="1d", progress=False, auto_adjust=True)
                 if df.empty:
                     return None
                 if isinstance(df.columns, pd.MultiIndex):
-                    df = df.xs(df.columns.get_level_values(1)[0], axis=1, level=1)
+                    tickers = df.columns.get_level_values(1).unique()
+                    if len(tickers) > 0:
+                        df = df.xs(tickers[0], axis=1, level=1).copy()
                 close_price = df["Close"].iloc[-1]
                 return float(close_price) if pd.notna(close_price) else None
         except Exception as e:
@@ -222,8 +233,10 @@ class TradeTracker:
                 finally:
                     conn.close()
 
+            # Special Nifty 50 rules: 100pts SL, 300pts Target, lot multiplier 65
+            is_nifty = (symbol == "NIFTY50" or symbol == "^NSEI")
+            
             if existing:
-                # Update existing position
                 signal_price = float(row.get("Price", existing.get("signal_price", 0)))
                 sector = row.get("Sector", existing.get("sector", ""))
                 update_data = {
@@ -235,14 +248,26 @@ class TradeTracker:
                     "rr": row.get("R:R", existing.get("rr", "")),
                 }
                 if existing["status"] == STATUS_PENDING_ENTRY and same_day_entry:
-                    update_data.update({
-                        "entry_date": signal_date,
-                        "entry_price": signal_price,
-                        "stop_loss": round(signal_price * (1 - STOP_LOSS_PCT), 2),
-                        "target": round(signal_price * (1 + PROFIT_TARGET_PCT), 2),
-                        "quantity": max(1, int(CAPITAL_PER_POSITION / signal_price)),
-                        "status": STATUS_ACTIVE,
-                    })
+                    if is_nifty:
+                        stop_loss = round(signal_price - 100, 2)
+                        target = round(signal_price + 300, 2)
+                        update_data.update({
+                            "entry_date": signal_date,
+                            "entry_price": signal_price,
+                            "stop_loss": stop_loss,
+                            "target": target,
+                            "quantity": 1,
+                            "status": STATUS_ACTIVE,
+                        })
+                    else:
+                        update_data.update({
+                            "entry_date": signal_date,
+                            "entry_price": signal_price,
+                            "stop_loss": round(signal_price * (1 - STOP_LOSS_PCT), 2),
+                            "target": round(signal_price * (1 + PROFIT_TARGET_PCT), 2),
+                            "quantity": max(1, int(CAPITAL_PER_POSITION / signal_price)),
+                            "status": STATUS_ACTIVE,
+                        })
                 self._upsert_position(existing["id"], {**existing, **update_data})
                 created.append(existing["id"])
                 continue
@@ -251,9 +276,20 @@ class TradeTracker:
             pos_id = f"{symbol}-{signal_date}"
             sector = row.get("Sector", "Unknown")
             signal_price = float(row.get("Price", 0))
-            stop_loss = round(signal_price * (1 - STOP_LOSS_PCT), 2) if same_day_entry else None
-            target = round(signal_price * (1 + PROFIT_TARGET_PCT), 2) if same_day_entry else None
-            quantity = max(1, int(CAPITAL_PER_POSITION / signal_price)) if same_day_entry else None
+            
+            if is_nifty and same_day_entry:
+                stop_loss = round(signal_price - 100, 2)
+                target = round(signal_price + 300, 2)
+                quantity = 1
+            elif same_day_entry:
+                stop_loss = round(signal_price * (1 - STOP_LOSS_PCT), 2)
+                target = round(signal_price * (1 + PROFIT_TARGET_PCT), 2)
+                quantity = max(1, int(CAPITAL_PER_POSITION / signal_price))
+            else:
+                stop_loss = None
+                target = None
+                quantity = None
+                
             status = STATUS_ACTIVE if same_day_entry else STATUS_PENDING_ENTRY
 
             data = {
