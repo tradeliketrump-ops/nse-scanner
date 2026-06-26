@@ -1,0 +1,250 @@
+HTTP Error 404: {"quoteSummary":{"result":null,"error":{"code":"Not Found","description":"Quote not found for symbol: TATAMOTORS.NS"}}}
+$TATAMOTORS.NS: possibly delisted; no timezone found
+
+1 Failed download:
+['TATAMOTORS.NS']: possibly delisted; no timezone found
+$AVENUE.NS: possibly delisted; no timezone found
+$ADANITRANS.NS: possibly delisted; no timezone found
+
+2 Failed downloads:
+['AVENUE.NS', 'ADANITRANS.NS']: possibly delisted; no timezone found
+$COLGATE.NS: possibly delisted; no timezone found
+
+1 Failed download:
+['COLGATE.NS']: possibly delisted; no timezone found
+$L&T.NS: possibly delisted; no timezone found
+$PEL.NS: possibly delisted; no timezone found
+$MCDOWELL-N.NS: possibly delisted; no timezone found
+$LTIM.NS: possibly delisted; no timezone found
+
+4 Failed downloads:
+['L&T.NS', 'PEL.NS', 'MCDOWELL-N.NS', 'LTIM.NS']: possibly delisted; no timezone found
+$SRTRANSFIN.NS: possibly delisted; no timezone found
+$ZOMATO.NS: possibly delisted; no timezone found
+
+2 Failed downloads:
+['SRTRANSFIN.NS', 'ZOMATO.NS']: possibly delisted; no timezone found
+$CHAMBELFERT.NS: possibly delisted; no timezone found
+
+1 Failed download:
+['CHAMBELFERT.NS']: possibly delisted; no timezone found
+$HINDWARE.NS: possibly delisted; no timezone found
+$HINDMOTORS.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$GOODYEAR.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$GMRINFRA.NS: possibly delisted; no timezone found
+$GSPL.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$IBULHSGFIN.NS: possibly delisted; no timezone found
+
+6 Failed downloads:
+['HINDWARE.NS', 'GMRINFRA.NS', 'IBULHSGFIN.NS']: possibly delisted; no timezone found
+['HINDMOTORS.NS', 'GOODYEAR.NS', 'GSPL.NS']: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$INFIBEAM.NS: possibly delisted; no timezone found
+$INOXLEISUR.NS: possibly delisted; no timezone found
+$ISEC.NS: possibly delisted; no timezone found
+$KALPATPOWR.NS: possibly delisted; no timezone found
+
+4 Failed downloads:
+['INFIBEAM.NS', 'INOXLEISUR.NS', 'ISEC.NS', 'KALPATPOWR.NS']: possibly delisted; no timezone found
+$MOBILIQ.NS: possibly delisted; no timezone found
+
+1 Failed download:
+['MOBILIQ.NS']: possibly delisted; no timezone found
+$POX.NS: possibly delisted; no timezone found
+$PHILIPCARB.NS: possibly delisted; no timezone found
+$RFLL.NS: possibly delisted; no timezone found
+$RBL.NS: possibly delisted; no timezone found
+$P&G.NS: possibly delisted; no timezone found
+$PRISMJOHNSON.NS: possibly delisted; no timezone found
+$PARKER.NS: possibly delisted; no timezone found
+
+7 Failed downloads:
+['POX.NS', 'PHILIPCARB.NS', 'RFLL.NS', 'RBL.NS', 'P&G.NS', 'PRISMJOHNSON.NS', 'PARKER.NS']: possibly delisted; no timezone found
+$SUDAR.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$SEDIT.NS: possibly delisted; no timezone found
+$TATAMETALI.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$SEQUENT.NS: possibly delisted; no timezone found
+$STERLING.NS: possibly delisted; no timezone found
+$SWANENERGY.NS: possibly delisted; no timezone found
+$STRTECH.NS: possibly delisted; no timezone found
+$SHOPER.NS: possibly delisted; no timezone found
+$SPICEJET.NS: possibly delisted; no timezone found
+
+9 Failed downloads:
+['SUDAR.NS', 'TATAMETALI.NS']: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+['SEDIT.NS', 'SEQUENT.NS', 'STERLING.NS', 'SWANENERGY.NS', 'STRTECH.NS', 'SHOPER.NS', 'SPICEJET.NS']: possibly delisted; no timezone found
+$VIJAYABANK.NS: possibly delisted; no timezone found
+$TECHNO.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$TV18BRDCST.NS: possibly delisted; no timezone found
+$VARDHMAN.NS: possibly delisted; no timezone found
+$TTKPRESTIGE.NS: possibly delisted; no timezone found
+
+5 Failed downloads:
+['VIJAYABANK.NS', 'TV18BRDCST.NS', 'VARDHMAN.NS', 'TTKPRESTIGE.NS']: possibly delisted; no timezone found
+['TECHNO.NS']: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+======================================================================
+  1-MONTH BACKTEST ? FULL 1H ANALYSIS
+  Period: 2026-01-01 to 2026-01-31
+  [!] NSE API returned 0 symbols, using fallback
+  [i] Using Nifty500 fallback (370 unique symbols from 373 total)
+  370 stocks, 5% SL, 10% Target, ?150000/trade
+======================================================================
+
+BACKTEST: 370 stocks, 2026-01-01 to 2026-01-31
+======================================================================
+Downloading daily data for 370 symbols from 2025-07-01 to 2026-01-31...
+  Daily: 30/370 (8%) ? 29 ok
+  Daily: 60/370 (16%) ? 57 ok
+  Daily: 90/370 (24%) ? 86 ok
+  Daily: 120/370 (32%) ? 112 ok
+  Daily: 150/370 (41%) ? 140 ok
+  Daily: 180/370 (49%) ? 169 ok
+  Daily: 210/370 (57%) ? 193 ok
+  Daily: 240/370 (65%) ? 219 ok
+  Daily: 270/370 (73%) ? 248 ok
+  Daily: 300/370 (81%) ? 271 ok
+  Daily: 330/370 (89%) ? 292 ok
+  Daily: 360/370 (97%) ? 317 ok
+  Daily: 370/370 (100%) ? 327 ok
+Daily download complete: 327/370
+January 2026 trading days: 21
+
+============================================================
+Day 1/21: 2026-01-01
+============================================================
+  Daily qualifiers: 19 stocks
+
+============================================================
+Day 2/21: 2026-01-02
+============================================================
+  Daily qualifiers: 24 stocks
+
+============================================================
+Day 3/21: 2026-01-05
+============================================================
+  Daily qualifiers: 27 stocks
+
+============================================================
+Day 4/21: 2026-01-06
+============================================================
+  Daily qualifiers: 28 stocks
+
+============================================================
+Day 5/21: 2026-01-07
+============================================================
+  Daily qualifiers: 28 stocks
+
+============================================================
+Day 6/21: 2026-01-08
+============================================================
+  Daily qualifiers: 29 stocks
+
+============================================================
+Day 7/21: 2026-01-09
+============================================================
+  Daily qualifiers: 25 stocks
+
+============================================================
+Day 8/21: 2026-01-12
+============================================================
+  Daily qualifiers: 21 stocks
+
+============================================================
+Day 9/21: 2026-01-13
+============================================================
+  Daily qualifiers: 22 stocks
+
+============================================================
+Day 10/21: 2026-01-14
+============================================================
+  Daily qualifiers: 23 stocks
+
+============================================================
+Day 11/21: 2026-01-15
+============================================================
+  Daily qualifiers: 22 stocks
+
+============================================================
+Day 12/21: 2026-01-16
+============================================================
+  Daily qualifiers: 25 stocks
+
+============================================================
+Day 13/21: 2026-01-19
+============================================================
+  Daily qualifiers: 25 stocks
+
+============================================================
+Day 14/21: 2026-01-20
+============================================================
+  Daily qualifiers: 22 stocks
+  ? BUY-R: PNB @ ?121.75945438503665 | SL: 115.67 | TGT: 133.94
+
+============================================================
+Day 15/21: 2026-01-21
+============================================================
+  Daily qualifiers: 17 stocks
+
+============================================================
+Day 16/21: 2026-01-22
+============================================================
+  Daily qualifiers: 24 stocks
+  ? BUY-R: HINDUNILVR @ ?2400.0 | SL: 2280.0 | TGT: 2640.0
+  ? BUY-R: BANKBARODA @ ?296.84874174096547 | SL: 282.01 | TGT: 326.53
+
+============================================================
+Day 17/21: 2026-01-23
+============================================================
+  Daily qualifiers: 21 stocks
+
+============================================================
+Day 18/21: 2026-01-27
+============================================================
+  Daily qualifiers: 21 stocks
+
+============================================================
+Day 19/21: 2026-01-28
+============================================================
+  Daily qualifiers: 26 stocks
+
+============================================================
+Day 20/21: 2026-01-29
+============================================================
+  Daily qualifiers: 29 stocks
+  ? BUY-R: HAL @ ?4581.931578682 | SL: 4352.83 | TGT: 5040.12
+
+============================================================
+Day 21/21: 2026-01-30
+============================================================
+  Daily qualifiers: 25 stocks
+Saved 4 trades to backtest_results.csv
+======================================================================
+NSE SWING SCANNER ? 1-MONTH BACKTEST (FULL 1H ANALYSIS)
+Period: 2026-01-01 to 2026-01-31
+======================================================================
+Total Stocks: 370
+Trading Days: ~22
+
+METRIC                         VALUE          
+---------------------------------------------
+Total Signals                  4              
+Closed Trades                  0              
+Wins                           0              
+Losses                         4              
+Win Rate                       0.0            %
+Net P&L (?)                    -5,273.35      
+Avg Win (?)                    0.00           
+Avg Loss (?)                   -1,318.34      
+Avg Holding Days               6.8            
+
+TOP 5 SYMBOLS BY P&L:
+  HAL             1 trades, 0W/1L, ?-19.04
+  PNB             1 trades, 0W/1L, ?-131.59
+  HINDUNILVR      1 trades, 0W/1L, ?-1,674.00
+  BANKBARODA      1 trades, 0W/1L, ?-3,448.72
+
+BOTTOM 5 SYMBOLS BY P&L:
+  HAL             1 trades, 0W/1L, ?-19.04
+  PNB             1 trades, 0W/1L, ?-131.59
+  HINDUNILVR      1 trades, 0W/1L, ?-1,674.00
+  BANKBARODA      1 trades, 0W/1L, ?-3,448.72
+======================================================================

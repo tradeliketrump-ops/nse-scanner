@@ -447,11 +447,11 @@ def trades_portfolio():
         return {"total_invested": 0, "current_value": 0, "total_pnl": 0, "total_pnl_percent": 0, "win_rate": 0, "active_count": 0, "pending_count": 0, "closed_count": 0, "total_signals": 0, "wins": 0, "losses": 0, "error": str(e)}
 
 @app.get("/api/trades/positions")
-def trades_positions(status: str = Query("all")):
+def trades_positions(status: str = Query("all"), from_date: str = Query(None, alias="from"), to_date: str = Query(None, alias="to")):
     try:
         tracker = get_tracker()
         status_filter = status if status != "all" else None
-        positions = tracker.get_positions(status_filter)
+        positions = tracker.get_positions(status_filter, from_date=from_date, to_date=to_date)
         return {"count": len(positions), "positions": positions}
     except Exception as e:
         logger.error(f"Positions error: {e}")
@@ -479,12 +479,14 @@ def trades_refresh():
         logger.error(f"Refresh error: {e}")
         return {"updated": 0, "failed": 0, "activated": 0, "closed": 0, "error": str(e)}
 
-@app.get("/api/trades/history")
-def trades_history():
+@app.get("/api/trades/diagnostics")
+def trades_diagnostics():
     try:
         tracker = get_tracker()
-        return {"position_count": len(tracker.data.get("positions", {})), "created_at": tracker.data.get("created_at"), "updated_at": tracker.data.get("updated_at")}
+        health = tracker.diagnose_health()
+        return health
     except Exception as e:
+        logger.error(f"Diagnostics error: {e}")
         return {"error": str(e)}
 
 # ─── Serve Dashboard ────────────────────────────────────────────────

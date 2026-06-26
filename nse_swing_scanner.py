@@ -160,9 +160,9 @@ def fetch_nifty500_symbols():
             if len(symbols) >= 400:
                 print(f"  ✅ Fetched {len(symbols)} Nifty500 symbols from NSE API")
                 return symbols
-        print(f"  ⚠ NSE API returned {len(symbols) if 'symbols' in dir() else 0} symbols, using fallback")
+        print(f"  [!] NSE API returned {len(symbols) if 'symbols' in dir() else 0} symbols, using fallback")
     except Exception as e:
-        print(f"  ⚠ Could not fetch Nifty500 from NSE API: {e}")
+        print(f"  [!] Could not fetch Nifty500 from NSE API: {e}")
     # Deduplicate while preserving order
     seen = set()
     unique = []
@@ -170,7 +170,7 @@ def fetch_nifty500_symbols():
         if s not in seen:
             seen.add(s)
             unique.append(s)
-    print(f"  ℹ Using Nifty500 fallback ({len(unique)} unique symbols from {len(NIFTY500_FALLBACK)} total)")
+    print(f"  [i] Using Nifty500 fallback ({len(unique)} unique symbols from {len(NIFTY500_FALLBACK)} total)")
     return unique
 
 def get_nse_symbols(force_refresh=False):
@@ -627,7 +627,7 @@ def download_data(symbols):
     return stock_data, failed, nr
 
 # ─── PROCESS STOCK (Daily) ──────────────────────────────────────────
-def process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max, mm, mv, early):
+def process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max, mm, mv, early, bearish_mode=False):
     base = strip_ns(sym)
     sector = get_sector(sym)
     
@@ -669,6 +669,37 @@ def process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max, mm, mv, early):
             }
         except Exception:
             return None
+    # Bearish mode: skip bullish qualification, just register stock for 1H sell analysis
+    if bearish_mode:
+        try:
+            ha = heiken_ashi(df)
+            ha["E20"] = ema(ha["HA_C"], EMA_PERIOD)
+            ha["S50"] = sma(ha["HA_C"], SMA_PERIOD)
+            lat = ha.iloc[-1]
+            lc = lat["Close"]
+            e20 = lat["E20"]
+            s50 = lat["S50"]
+            if pd.isna(e20) or pd.isna(s50):
+                return None
+            return {
+                "Rank": 0, "Symbol": base, "Sector": sector,
+                "Price": round(lc, 2), "Mcap_Cr": 0, "Avg_Vol": 0,
+                "EMA20": round(e20, 2), "SMA50": round(s50, 2),
+                "D_E20": round(dist(lc, e20), 2), "D_S50": round(dist(lc, s50), 2),
+                "RS": 0, "RSI": 0,
+                "V_Spike": "No", "V_Ratio": 1.0,
+                "HH_HL": False, "L_Wick": False,
+                "C1": "No", "C2": "No", "C3": "No",
+                "Days_Since": 0, "Stage": "Bearish",
+                "Near_Miss": "N/A",
+                "Trend": "Bearish",
+                "Entry": "-", "Stop": "-", "R:R": "N/A",
+                "1H_Setup": "", "1H_Detail": "", "1H_Zone": "",
+            }
+        except Exception:
+            return None
+
+    # Normal (bullish) mode
     try:
         ha = heiken_ashi(df)
         ha["E20"] = ema(ha["HA_C"], EMA_PERIOD)
@@ -740,19 +771,40 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
     stock_data, failed, nr = download_data(symbols_list)
     print(f"  Loaded: {len(stock_data)}, Failed: {len(failed)}")
 
-    # Step 2: Screen
-    print(f"\n[2/4] Screening...")
+    # Step 2a: Screen — Bullish pass
+    print(f"\n[2/4] Screening (bullish pass)...")
     results = []
+    bearish_candidates = []  # stocks with valid data but not bullish-qualified
     for sym, df in stock_data.items():
         r = process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max,
                           min_mcap, min_vol, early_mode)
-        if r: results.append(r)
-    print(f"  Qualifying: {len(results)}")
+        if r:
+            results.append(r)
+        else:
+            # Track failed stocks for bearish pass (skip Nifty — it's always bullish)
+            if sym != NIFTY_SPOT and len(df) > SMA_PERIOD + 10:
+                bearish_candidates.append((sym, df))
+    print(f"  Bullish qualifying: {len(results)}")
+
+    # Step 2b: Screen — Bearish pass (for sell signals)
+    if bearish_candidates:
+        print(f"  Bearish pass: checking {len(bearish_candidates)} stocks for sell signals...")
+        for sym, df in bearish_candidates:
+            r = process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max,
+                              min_mcap, min_vol, early_mode, bearish_mode=True)
+            if r:
+                results.append(r)
+        print(f"  Total after bearish pass: {len(results)}")
 
     # Step 3: 1H Entry Analysis (parallel)
     if analyze_1h_mode and results:
         print(f"\n[3/4] 1-Hour TV-Style Analysis ({len(results)} stocks, parallel)...")
-        syms_1h = [r["Symbol"] + ".NS" for r in results]
+        def _build_1h_sym(symbol):
+            """Map display symbol to yfinance symbol for 1H analysis."""
+            if symbol == "NIFTY50":
+                return "^NSEI"
+            return symbol + ".NS"
+        syms_1h = [_build_1h_sym(r["Symbol"]) for r in results]
         results_map = {r["Symbol"]: r for r in results}
 
         with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
@@ -839,7 +891,7 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
 
         print(f"  ✅ XLSX: {xlsx_path} (4 sheets)")
     except Exception as e:
-        print(f"  ⚠ Excel: {e}")
+        print(f"  [!] Excel: {e}")
 
     # Summary
     total = len(df_out)

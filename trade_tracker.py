@@ -376,26 +376,28 @@ class TradeTracker:
 
                     # Check SL
                     if sl and current_price <= sl:
-                        pnl = round((current_price - entry) * (pos["quantity"] or 1), 2)
+                        raw_pnl = round((current_price - entry) * (pos["quantity"] or 1), 2)
+                        pnl = raw_pnl * 65 if pos["symbol"] in ("NIFTY50", "^NSEI") else raw_pnl
                         conn.execute("""
                             UPDATE positions SET close_date=?, close_price=?, close_reason=?,
                             pnl=?, pnl_percent=?, status=?, current_price=?
                             WHERE id=?
                         """, (date.today().isoformat(), current_price, "stop_loss",
-                              pnl, round(pnl / entry * 100, 2) if entry else 0,
+                              pnl, round(raw_pnl / entry * 100, 2) if entry else 0,
                               STATUS_CLOSED, current_price, pos["id"]))
                         closed.append({"id": pos["id"], "symbol": pos["symbol"], "reason": "stop_loss", "pnl": pnl})
                         continue
 
                     # Check Target
                     if tgt and current_price >= tgt:
-                        pnl = round((current_price - entry) * (pos["quantity"] or 1), 2)
+                        raw_pnl = round((current_price - entry) * (pos["quantity"] or 1), 2)
+                        pnl = raw_pnl * 65 if pos["symbol"] in ("NIFTY50", "^NSEI") else raw_pnl
                         conn.execute("""
                             UPDATE positions SET close_date=?, close_price=?, close_reason=?,
                             pnl=?, pnl_percent=?, status=?, current_price=?
                             WHERE id=?
                         """, (date.today().isoformat(), current_price, "target",
-                              pnl, round(pnl / entry * 100, 2) if entry else 0,
+                              pnl, round(raw_pnl / entry * 100, 2) if entry else 0,
                               STATUS_CLOSED, current_price, pos["id"]))
                         closed.append({"id": pos["id"], "symbol": pos["symbol"], "reason": "target", "pnl": pnl})
                         continue
@@ -497,8 +499,36 @@ class TradeTracker:
             "losses": losses,
         }
 
-    def get_positions(self, status_filter: Optional[str] = None) -> list[dict]:
-        return self._get_positions(status_filter)
+    def get_positions(self, status_filter: Optional[str] = None, from_date: Optional[str] = None, to_date: Optional[str] = None) -> list[dict]:
+        """Get positions with optional status and date-range filtering."""
+        positions = self._get_positions(status_filter)
+        if from_date:
+            positions = [p for p in positions if p.get("signal_date", "") >= from_date]
+        if to_date:
+            positions = [p for p in positions if p.get("signal_date", "") <= to_date]
+        return positions
+
+    def diagnose_health(self) -> dict:
+        """Return DB diagnostics to verify data integrity."""
+        with _lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute("SELECT * FROM positions").fetchall()
+                positions = [self._row_to_dict(r) for r in rows]
+            finally:
+                conn.close()
+        active = sum(1 for p in positions if p["status"] == STATUS_ACTIVE)
+        pending = sum(1 for p in positions if p["status"] == STATUS_PENDING_ENTRY)
+        closed = sum(1 for p in positions if p["status"] == STATUS_CLOSED)
+        db_size = os.path.getsize(self.db_path) / (1024 * 1024) if os.path.exists(self.db_path) else 0
+        return {
+            "db_path": self.db_path,
+            "db_size_mb": round(db_size, 2),
+            "total_rows": len(positions),
+            "active_count": active,
+            "pending_count": pending,
+            "closed_count": closed,
+        }
 
     def get_symbol_stats(self) -> list[dict]:
         positions = self._get_positions()

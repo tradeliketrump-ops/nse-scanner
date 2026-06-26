@@ -1,0 +1,29 @@
+======================================================================
+  1-MONTH BACKTEST — FULL 1H ANALYSIS
+  Period: 2026-01-01 to 2026-01-31
+Traceback (most recent call last):
+  File "c:\Users\mikhu\Desktop\TRADE-DS\nse_swing_scanner.py", line 163, in fetch_nifty500_symbols
+    print(f"  \u26a0 NSE API returned {len(symbols) if 'symbols' in dir() else 0} symbols, using fallback")
+  File "C:\Users\mikhu\AppData\Local\Programs\Python\Python312\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 2: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "c:\Users\mikhu\Desktop\TRADE-DS\backtest.py", line 361, in <module>
+    print(f"  {len(NSE_SYMBOLS)} stocks, 5% SL, 10% Target, \u20b9{CAPITAL}/trade")
+               ^^^^^^^^^^^^^^^^
+  File "c:\Users\mikhu\Desktop\TRADE-DS\nse_swing_scanner.py", line 193, in __len__
+    self._resolved = get_nse_symbols()
+                     ^^^^^^^^^^^^^^^^^
+  File "c:\Users\mikhu\Desktop\TRADE-DS\nse_swing_scanner.py", line 180, in get_nse_symbols
+    _NSE_SYMBOLS_CACHE = fetch_nifty500_symbols()
+                         ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\mikhu\Desktop\TRADE-DS\nse_swing_scanner.py", line 165, in fetch_nifty500_symbols
+    print(f"  \u26a0 Could not fetch Nifty500 from NSE API: {e}")
+  File "C:\Users\mikhu\AppData\Local\Programs\Python\Python312\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u26a0' in position 2: character maps to <undefined>

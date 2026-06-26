@@ -1,0 +1,12 @@
+======================================================================
+  1-MONTH BACKTEST — FULL 1H ANALYSIS
+  Period: 2026-01-01 to 2026-01-31
+  [!] NSE API returned 0 symbols, using fallback
+  [i] Using Nifty500 fallback (370 unique symbols from 373 total)
+Traceback (most recent call last):
+  File "c:\Users\mikhu\Desktop\TRADE-DS\backtest.py", line 361, in <module>
+    print(f"  {len(NSE_SYMBOLS)} stocks, 5% SL, 10% Target, \u20b9{CAPITAL}/trade")
+  File "C:\Users\mikhu\AppData\Local\Programs\Python\Python312\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u20b9' in position 33: character maps to <undefined>

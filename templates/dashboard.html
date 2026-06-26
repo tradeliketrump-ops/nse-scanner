@@ -160,6 +160,17 @@ tr:hover td { background:rgba(0,212,170,0.05); }
       <div class="row mt-12" id="portfolioPnlRow"></div>
     </div>
 
+    <!-- Date Range Filter -->
+    <div class="card" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+      <span style="color:#888;font-size:0.85rem;">📅 Filter by date:</span>
+      <input type="date" id="filterFrom" style="background:#16213e;color:#e0e0e0;border:1px solid #2a2a4a;border-radius:6px;padding:6px 10px;font-size:0.82rem;">
+      <span style="color:#555;">to</span>
+      <input type="date" id="filterTo" style="background:#16213e;color:#e0e0e0;border:1px solid #2a2a4a;border-radius:6px;padding:6px 10px;font-size:0.82rem;">
+      <button class="btn btn-primary btn-sm" onclick="applyDateFilter()">Apply</button>
+      <button class="btn btn-secondary btn-sm" onclick="clearDateFilter()">Clear</button>
+      <span id="dateFilterStatus" class="text-muted"></span>
+    </div>
+
     <!-- Refresh Button -->
     <div class="card" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
       <button class="btn btn-primary btn-sm" onclick="refreshPortfolio()">🔄 Refresh Prices</button>
@@ -607,6 +618,39 @@ async function refreshPortfolio() {
     btn.textContent = '🔄 Refresh Prices';
     setTimeout(() => { statusEl.textContent = ''; }, 5000);
   }
+}
+
+// ─── Date Range Filter ──────────────────────────────────────────────
+async function applyDateFilter() {
+  const fromVal = document.getElementById('filterFrom').value;
+  const toVal = document.getElementById('filterTo').value;
+  const statusEl = document.getElementById('dateFilterStatus');
+  if (!fromVal && !toVal) {
+    statusEl.textContent = 'Please select a date range';
+    setTimeout(() => { statusEl.textContent = ''; }, 3000);
+    return;
+  }
+  statusEl.textContent = 'Filtering...';
+  try {
+    const params = new URLSearchParams();
+    params.set('status', currentPFilter);
+    if (fromVal) params.set('from', fromVal);
+    if (toVal) params.set('to', toVal);
+    const r = await fetch('/api/trades/positions?' + params.toString());
+    const d = await r.json();
+    currentPositions = d.positions || [];
+    renderPositions(currentPositions);
+    statusEl.textContent = `📅 ${fromVal || 'any'} → ${toVal || 'any'} (${currentPositions.length} positions)`;
+  } catch(e) {
+    statusEl.textContent = '❌ Error filtering: ' + e.message;
+  }
+}
+
+function clearDateFilter() {
+  document.getElementById('filterFrom').value = '';
+  document.getElementById('filterTo').value = '';
+  document.getElementById('dateFilterStatus').textContent = '';
+  loadPositions(currentPFilter);
 }
 
 </script>

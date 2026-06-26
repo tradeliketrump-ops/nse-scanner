@@ -1,0 +1,121 @@
+HTTP Error 404: {"quoteSummary":{"result":null,"error":{"code":"Not Found","description":"Quote not found for symbol: TATAMOTORS.NS"}}}
+$TATAMOTORS.NS: possibly delisted; no timezone found
+
+1 Failed download:
+['TATAMOTORS.NS']: possibly delisted; no timezone found
+$AVENUE.NS: possibly delisted; no timezone found
+$ADANITRANS.NS: possibly delisted; no timezone found
+
+2 Failed downloads:
+['AVENUE.NS', 'ADANITRANS.NS']: possibly delisted; no timezone found
+$COLGATE.NS: possibly delisted; no timezone found
+
+1 Failed download:
+['COLGATE.NS']: possibly delisted; no timezone found
+$PEL.NS: possibly delisted; no timezone found
+$L&T.NS: possibly delisted; no timezone found
+$MCDOWELL-N.NS: possibly delisted; no timezone found
+$LTIM.NS: possibly delisted; no timezone found
+
+4 Failed downloads:
+['PEL.NS', 'L&T.NS', 'MCDOWELL-N.NS', 'LTIM.NS']: possibly delisted; no timezone found
+$SRTRANSFIN.NS: possibly delisted; no timezone found
+$ZOMATO.NS: possibly delisted; no timezone found
+
+2 Failed downloads:
+['SRTRANSFIN.NS', 'ZOMATO.NS']: possibly delisted; no timezone found
+$CHAMBELFERT.NS: possibly delisted; no timezone found
+
+1 Failed download:
+['CHAMBELFERT.NS']: possibly delisted; no timezone found
+$HINDMOTORS.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$GOODYEAR.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$IBULHSGFIN.NS: possibly delisted; no timezone found
+$GMRINFRA.NS: possibly delisted; no timezone found
+$GSPL.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$HINDWARE.NS: possibly delisted; no timezone found
+
+6 Failed downloads:
+['HINDMOTORS.NS', 'GOODYEAR.NS', 'GSPL.NS']: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+['IBULHSGFIN.NS', 'GMRINFRA.NS', 'HINDWARE.NS']: possibly delisted; no timezone found
+$INOXLEISUR.NS: possibly delisted; no timezone found
+$ISEC.NS: possibly delisted; no timezone found
+$KALPATPOWR.NS: possibly delisted; no timezone found
+$INFIBEAM.NS: possibly delisted; no timezone found
+
+4 Failed downloads:
+['INOXLEISUR.NS', 'ISEC.NS', 'KALPATPOWR.NS', 'INFIBEAM.NS']: possibly delisted; no timezone found
+$MOBILIQ.NS: possibly delisted; no timezone found
+
+1 Failed download:
+['MOBILIQ.NS']: possibly delisted; no timezone found
+$PHILIPCARB.NS: possibly delisted; no timezone found
+$PRISMJOHNSON.NS: possibly delisted; no timezone found
+$POX.NS: possibly delisted; no timezone found
+$RBL.NS: possibly delisted; no timezone found
+$P&G.NS: possibly delisted; no timezone found
+$RFLL.NS: possibly delisted; no timezone found
+$PARKER.NS: possibly delisted; no timezone found
+
+7 Failed downloads:
+['PHILIPCARB.NS', 'PRISMJOHNSON.NS', 'POX.NS', 'RBL.NS', 'P&G.NS', 'RFLL.NS', 'PARKER.NS']: possibly delisted; no timezone found
+$SEDIT.NS: possibly delisted; no timezone found
+$TATAMETALI.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$SPICEJET.NS: possibly delisted; no timezone found
+$STERLING.NS: possibly delisted; no timezone found
+$SUDAR.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$SEQUENT.NS: possibly delisted; no timezone found
+$SWANENERGY.NS: possibly delisted; no timezone found
+$SHOPER.NS: possibly delisted; no timezone found
+$STRTECH.NS: possibly delisted; no timezone found
+
+9 Failed downloads:
+['SEDIT.NS', 'SPICEJET.NS', 'STERLING.NS', 'SEQUENT.NS', 'SWANENERGY.NS', 'SHOPER.NS', 'STRTECH.NS']: possibly delisted; no timezone found
+['TATAMETALI.NS', 'SUDAR.NS']: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$TECHNO.NS: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+$VARDHMAN.NS: possibly delisted; no timezone found
+$TTKPRESTIGE.NS: possibly delisted; no timezone found
+$TV18BRDCST.NS: possibly delisted; no timezone found
+$VIJAYABANK.NS: possibly delisted; no timezone found
+
+5 Failed downloads:
+['TECHNO.NS']: possibly delisted; no price data found  (1d 2025-07-01 -> 2026-01-31)
+['VARDHMAN.NS', 'TTKPRESTIGE.NS', 'TV18BRDCST.NS', 'VIJAYABANK.NS']: possibly delisted; no timezone found
+======================================================================
+  1-MONTH BACKTEST ? FULL 1H ANALYSIS
+  Period: 2026-01-01 to 2026-01-31
+  [!] NSE API returned 0 symbols, using fallback
+  [i] Using Nifty500 fallback (370 unique symbols from 373 total)
+  370 stocks, 5% SL, 10% Target, ?150000/trade
+======================================================================
+
+BACKTEST: 370 stocks, 2026-01-01 to 2026-01-31
+======================================================================
+Downloading daily data for 370 symbols from 2025-07-01 to 2026-01-31...
+  Daily: 30/370 (8%) ? 29 ok
+  Daily: 60/370 (16%) ? 57 ok
+  Daily: 90/370 (24%) ? 86 ok
+  Daily: 120/370 (32%) ? 112 ok
+  Daily: 150/370 (41%) ? 140 ok
+  Daily: 180/370 (49%) ? 169 ok
+  Daily: 210/370 (57%) ? 193 ok
+  Daily: 240/370 (65%) ? 219 ok
+  Daily: 270/370 (73%) ? 248 ok
+  Daily: 300/370 (81%) ? 271 ok
+  Daily: 330/370 (89%) ? 292 ok
+  Daily: 360/370 (97%) ? 317 ok
+  Daily: 370/370 (100%) ? 327 ok
+Daily download complete: 327/370
+January 2026 trading days: 21
+
+============================================================
+Day 1/21: 2026-01-01
+============================================================
+  Daily qualifiers: 19 stocks
+Traceback (most recent call last):
+  File "c:\Users\mikhu\Desktop\TRADE-DS\backtest.py", line 363, in <module>
+    run_backtest()
+  File "c:\Users\mikhu\Desktop\TRADE-DS\backtest.py", line 221, in run_backtest
+    with ThreadPoolExecutor(max_workers=10) as ex:
+         ^^^^^^^^^^^^^^^^^^
+UnboundLocalError: cannot access local variable 'ThreadPoolExecutor' where it is not associated with a value

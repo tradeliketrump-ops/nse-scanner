@@ -1,247 +1,115 @@
-# Implementation Plan
+# Implementation Plan — Trade Persistence, Signal Generation & Dashboard Enhancements
 
-Add a trade performance tracking system to the NSE Swing Scanner that automatically logs "BUY NOW" signals as positions, tracks them against 5% stop-loss and 10% profit targets with a capital of ₹1.5L per position, and displays portfolio performance on the dashboard.
+## Overview
 
-The current system scans stocks daily and generates a watchlist with "BUY NOW"/"WATCH"/"WAIT" classifications but has no mechanism to track whether those signals actually performed well. This implementation adds a persistent trade journal stored in `trades_history.json`, a background scheduler that checks position prices during market hours, and a new portfolio dashboard section. The entry price is the next-day open price after 9:30 AM IST (15 min after market opens), and positions remain open indefinitely until either the 5% stop-loss or 10% profit target is hit. The entire system runs within the existing FastAPI server without needing any external database.
+Fix critical issues where trade positions disappear from the Performance Report on Render deployments, sell signals are never generated, Nifty 50 fails to produce BUY-R/BUY-B signals in the 1H analysis, and add date-range filtering for monthly performance review.
 
-[Types]
+## Context
 
-A set of JSON-serializable data structures stored in `trades_history.json` representing positions, portfolio state, and entry/exit records.
+The NSE Swing Scanner runs on Render with a persistent disk mount (`/data`) for SQLite storage. However, Render disk is tied to the service — redeploying (which auto-deploys on every Git push) wipes the disk, losing all trade history. Beyond that, the scanner has several bugs: (1) `run_scanner()` builds incorrect symbol names for 1H analysis on Nifty 50 (uses "NIFTY50.NS" instead of "^NSEI"), (2) `process_stock()` only passes bullish-filtered stocks into 1H analysis, so sell signals requiring bearish daily context are never produced, (3) Nifty 50 P&L calculations don't apply the ×65 lot multiplier in `check_open_positions()` or dashboard rendering, (4) there's no date-range filtering to evaluate monthly performance. These changes span all five files: `nse_swing_scanner.py`, `trade_tracker.py`, `nse_scanner_api.py`, `templates/dashboard.html`.
 
-### PositionStatus (enum values stored as strings)
-- `"pending_entry"` — Signal received, waiting for next-day open price entry
-- `"active"` — Entry price set, position is live and being monitored
-- `"closed"` — Position closed by hitting SL or target
+## Types
 
-### Position (dictionary shape stored in trades_history.json)
-```
-{
-  "id": str,                    // "{symbol}-{signal_date}" e.g. "TRENT-2026-06-15"
-  "symbol": str,                // e.g. "TRENT"
-  "sector": str,                // e.g. "Consumer"
-  "signal_date": str,           // ISO date "2026-06-15"
-  "signal_price": float,        // Price when BUY NOW signal was generated
-  "entry_date": str | null,     // ISO date when entry was filled
-  "entry_price": float | null,  // Open price on entry date
-  "stop_loss": float | null,    // entry_price * 0.95
-  "target": float | null,       // entry_price * 1.10
-  "capital": 150000,            // Fixed capital per position
-  "quantity": int | null,       // floor(capital / entry_price)
-  "status": PositionStatus,
-  "close_date": str | null,     // ISO date when closed
-  "close_price": float | null,
-  "close_reason": str | null,   // "stop_loss" | "target"
-  "pnl": float | null,          // Total profit/loss in rupees
-  "pnl_percent": float | null,  // Percentage return
-  "current_price": float | null // Latest known price (for active positions)
-}
-```
+No new data types or classes — all changes are logic modifications to existing functions and API parameters.
 
-### PortfolioSummary (returned by API)
-```
-{
-  "total_invested": float,
-  "current_value": float,
-  "total_pnl": float,
-  "total_pnl_percent": float,
-  "win_rate": float,           // % of closed positions profitable
-  "active_count": int,
-  "pending_count": int,
-  "closed_count": int,
-  "wins": int,
-  "losses": int
-}
-```
+| Existing Value | Change |
+|----------------|--------|
+| `NIFTY50_SYMBOL = "^NSEI"` | Unchanged (already correct) |
+| `NIFTY_SPOT = "^NSEI"` | Unchanged (already correct) |
+| `CAPITAL_PER_POSITION = 150000` | Unchanged |
+| `STOP_LOSS_PCT = 0.05` | Unchanged |
+| `PROFIT_TARGET_PCT = 0.10` | Unchanged |
 
-### PerformanceStats (per-symbol stats)
-```
-{
-  "symbol": str,
-  "sector": str,
-  "total_signals": int,
-  "active": int,
-  "closed_wins": int,
-  "closed_losses": int,
-  "avg_pnl_percent": float,
-  "total_pnl": float
-}
-```
+No new enums, interfaces, or type definitions required.
 
-[Files]
+## Files
 
-A new module for trade tracking logic, a JSON file for persistent storage, and modifications to the API server and dashboard template.
+### Files Modified
 
-### New Files
+1. **`nse_swing_scanner.py`** — Two critical changes:
+   - Add a **second bearish scan pass** in `process_stock()` that returns results with the same symbol/price/sector info but skip bullish-only filters (no EMA20/SMA50/Volume/market cap filters) — essentially register all bearish stocks for 1H analysis so sell signals can fire
+   - Fix Nifty 50 1H symbol in `run_scanner()`: when building `syms_1h`, map `"NIFTY50"` → `"^NSEI"` before passing to `analyze_1h()`
 
-1. **`trade_tracker.py`** — Core trade tracking module containing:
-   - `TradeTracker` class that reads/writes `trades_history.json`
-   - `create_positions_from_results(results: list[dict]) → list[Position]` — Scans watchlist results for "BUY NOW" signals and creates pending_entry positions
-   - `check_open_positions() → list[str]` — Fetches current prices for all active positions and closes them if SL/target hit
-   - `process_pending_entries() → list[str]` — Fetches today's open prices for pending_entry positions during market hours
-   - `get_portfolio_summary() → PortfolioSummary`
-   - `get_position_history() → dict` — Returns all positions grouped by status
-   - `fetch_price(symbol: str, date_str: str) → float | None` — Fetches open/current price via yfinance
+2. **`trade_tracker.py`** — Three changes:
+   - In `check_open_positions()`: when Nifty 50 position is closed (SL or target), multiply P&L by 65 lot multiplier
+   - In `get_portfolio_summary()` / `get_symbol_stats()`: add Nifty 65x multiplier handling for P&L display consistency
+   - Add a `diagnose_health()` method to report DB path, row count, disk usage
 
-2. **`trades_history.json`** (auto-created) — Persistent store with structure:
-   ```json
-   {
-     "positions": {
-       "TRENT-2026-06-15": { ... Position ... },
-       ...
-     },
-     "created_at": "2026-06-15T19:00:00",
-     "updated_at": "2026-06-16T09:45:00"
-   }
-   ```
+3. **`nse_scanner_api.py`** — Two new endpoints:
+   - `GET /api/trades/diagnostics` — returns DB health info (file path, size, position counts by status)
+   - `GET /api/trades/positions?status=active&from=2026-06-01&to=2026-06-26` — adds optional `from` and `to` query parameters for date-range filtering on `signal_date`
 
-### Modified Files
+4. **`templates/dashboard.html`** — Three changes:
+   - Add **date range picker** (two `<input type="date">` fields + filter button) in the Performance Report tab
+   - Fix Nifty P&L display to apply ×65 lot multiplier when symbol is NIFTY50
+   - Show DB health stats at the bottom of Performance Report tab
+   - Improve "0 positions" empty state to show meaningful message
 
-3. **`nse_scanner_api.py`** — Major additions:
-   - Import `TradeTracker` from `trade_tracker.py`
-   - Add new API endpoints (see Functions section)
-   - Integrate trade creation into `run_scan_task()` — after scan completes, call `tracker.create_positions_from_results()`
-   - Add APScheduler integration for the background price-checking task (runs every 15 min during market hours, 9:30 AM–3:30 PM IST Mon-Fri)
-   - Add startup initialization of the scheduler
+No new files, no deleted files, no config changes.
 
-4. **`templates/dashboard.html`** — Add a "Portfolio" tab/section with:
-   - Portfolio summary card (total invested, current value, P&L, win rate)
-   - Open positions table (entry price, current price, P&L, status)
-   - Pending entries table
-   - Closed trades history table
-   - Per-symbol performance breakdown
-   - Navigation tabs to switch between "Watchlist" and "Portfolio" views
+## Functions
 
-5. **`requirements.txt`** — Add `apscheduler` (already present but let's confirm version compatibility)
+### Modified Functions
 
-[Functions]
+1. **`nse_swing_scanner.py:run_scanner()`** (line ~753)
+   - After building `syms_1h`, map `"NIFTY50"` → `"^NSEI"` for the yfinance call
+   - After the bullish scan pass, add a bearish scan pass for stocks that **failed** the bullish filter but have valid daily data, to catch sell signals
 
-### New Functions in `trade_tracker.py`
+2. **`nse_swing_scanner.py:process_stock()`** (~line 630)
+   - Add a `bearish_mode=False` parameter
+   - When `bearish_mode=True`, skip the bullish-qualification filters (C1/C2/C3, volume, mcap, RSI). Instead check for bearish context (HA < E20, DI- > DI+, basic ADX check). Return a simplified result that includes symbol, sector, price but with Stage="Bearish", Trend="Bearish"
 
-1. **`TradeTracker.__init__(self, json_path: str = "trades_history.json")`**
-   - Loads existing JSON file or creates empty structure
+3. **`trade_tracker.py:check_open_positions()`** (~line 377-400)
+   - After P&L calculation, check if symbol is "NIFTY50" or "^NSEI"; if so multiply P&L by 65
 
-2. **`TradeTracker._save(self) -> None`**
-   - Writes in-memory state to JSON file with atomic write
+4. **`trade_tracker.py:get_portfolio_summary()`** (~line 440)
+   - Ensure Nifty 50 closed position P&L includes 65x multiplier in summary
 
-3. **`TradeTracker._load(self) -> None`**
-   - Reads JSON file into memory, handles missing/corrupt files
+5. **`trade_tracker.py:get_symbol_stats()`** (~line 503)
+   - Ensure Nifty 50 P&L per-symbol stats include 65x multiplier
 
-4. **`TradeTracker.create_positions_from_results(self, results: list[dict], signal_date: str | None = None) -> list[str]`**
-   - Input: List of scan result dicts (from `/api/watchlist/latest-data` format)
-   - Logic: For each result where `1H_Setup == "BUY NOW"`, check if a position already exists for that symbol+date. If not, create a `pending_entry` position.
-   - Returns: List of created position IDs
+6. **`trade_tracker.py`** — New method `diagnose_health()`
+   - Returns `{"db_path": str, "db_size_mb": float, "total_rows": int, "active_count": int, "pending_count": int, "closed_count": int}`
 
-5. **`TradeTracker.process_pending_entries(self) -> list[str]`**
-   - Logic: For all `pending_entry` positions, check if current time >= entry_date 9:30 AM IST. If yes, fetch today's open price via yfinance. Set `entry_price`, `stop_loss`, `target`, `quantity`. If price fetch succeeds, set status to `active`. If price fetch fails, keep as `pending_entry` (retry later).
-   - Returns: List of position IDs that were activated
+7. **`nse_scanner_api.py:trades_positions()`** (~line 449)
+   - Add optional `from_date` and `to_date` query parameters
+   - Pass to `TradeTracker.get_positions()` filter
 
-6. **`TradeTracker.check_open_positions(self) -> list[dict]`**
-   - Logic: For all `active` positions, fetch current price via yfinance.
-   - If `current_price <= stop_loss`: Close position with reason `stop_loss`, calculate P&L
-   - If `current_price >= target`: Close position with reason `target`, calculate P&L
-   - Otherwise: Update `current_price`
-   - Returns: List of dicts with `{id, reason, pnl, pnl_percent}` for closed positions
+8. **`trade_tracker.py:get_positions()`** (~line 500)
+   - Accept optional `from_date` and `to_date` kwargs
+   - Filter by `signal_date >= from_date AND signal_date <= to_date`
 
-7. **`TradeTracker.fetch_price(self, symbol: str, date_str: str | None = None, interval: str = "1d") -> float | None`**
-   - Wraps yfinance.download to get price data
-   - If `date_str` is provided, fetches open price for that specific date
-   - If `date_str` is None, fetches the latest close price
-   - Returns: Price or None on failure
+### New Functions
 
-8. **`TradeTracker.get_portfolio_summary(self) -> dict`**
-   - Aggregates all positions into PortfolioSummary
-   - Calculates win rate, total P&L, active/pending/closed counts
+1. **`trade_tracker.py:diagnose_health()`** — static or instance method returning DB diagnostics dict
+2. **`nse_scanner_api.py:trades_diagnostics()`** — new FastAPI endpoint handler
 
-9. **`TradeTracker.get_positions(self, status_filter: str | None = None) -> list[dict]`**
-   - Returns all positions, optionally filtered by status
+## Classes
 
-10. **`TradeTracker.get_symbol_stats(self) -> list[dict]`**
-    - Groups closed positions by symbol, calculates per-symbol win rate and avg P&L
+No new classes. No removed classes. Only modifications to `TradeTracker`:
 
-### New Functions in `nse_scanner_api.py`
+- Add method `diagnose_health(self) -> dict`
+- Modify `get_positions(self, status_filter, from_date, to_date) -> list[dict]`
 
-11. **`start_scheduler() -> BackgroundScheduler`**
-    - Creates an APScheduler BackgroundScheduler
-    - Adds a job: `check_trades()` every 15 minutes
-    - Adds market hours detection (9:30 AM–3:30 PM IST, Mon-Fri)
-    - Returns the scheduler instance
+## Dependencies
 
-12. **`check_trades() -> None`**
-    - Called by scheduler
-    - Instantiates TradeTracker
-    - Calls `process_pending_entries()` and `check_open_positions()`
-    - Logs results for dashboard polling
+No new dependencies. Everything uses existing imports: `os`, `sqlite3`, `yfinance`, `pandas`, `numpy`, `FastAPI`.
 
-13. **`activate_pending_entries() -> dict`**
-    - Called by scheduler, specifically processes pending → active transitions
-    - Separate from check_trades for clarity
+## Testing
 
-### New API Endpoints in `nse_scanner_api.py`
+- Run `python nse_scanner_api.py` locally and verify:
+  - `GET /api/trades/diagnostics` returns valid JSON with DB info
+  - `GET /api/trades/positions?from=2026-06-01&to=2026-06-26` filters correctly
+  - Performance Report loads with date picker visible
+- Verify Nifty 50 gets mapped correctly for 1H analysis by checking scan logs
+- Verify sell signals appear when bearish stocks are scanned
 
-14. **`GET /api/trades/portfolio`**
-    - Returns portfolio summary (total invested, current value, P&L, win rate, counts)
+## Implementation Order
 
-15. **`GET /api/trades/positions?status=all|active|pending|closed`**
-    - Returns list of positions filtered by status
-
-16. **`GET /api/trades/symbol-stats`**
-    - Returns per-symbol performance breakdown
-
-17. **`POST /api/trades/refresh-prices`**
-    - Manually triggers price check for all open positions (for manual refresh from dashboard)
-
-### Modified Function in `nse_scanner_api.py`
-
-18. **`run_scan_task(task_id, early_mode)`** (modified)
-    - After scan completes successfully and has results, instantiate TradeTracker
-    - Call `tracker.create_positions_from_results(result_json)`
-
-### New Dashboard Functions in `templates/dashboard.html`
-
-19. **`loadPortfolio() -> void`**
-    - Fetches `/api/trades/portfolio` and renders summary cards
-
-20. **`loadPositions(status) -> void`**
-    - Fetches `/api/trades/positions?status=X` and renders positions table
-
-21. **`renderPortfolioTab() -> void`**
-    - Main entry point for switching to portfolio view
-    - Calls `loadPortfolio()`, `loadPositions('active')`, etc.
-
-22. **`renderPositionsTable(positions, containerId) -> void`**
-    - Renders positions data into an HTML table with appropriate coloring
-
-[Classes]
-
-No new Python classes beyond the `TradeTracker` class described in the Functions section. No existing classes are modified.
-
-### TradeTracker
-- **File**: `trade_tracker.py`
-- **Key Methods**: `__init__`, `_save`, `_load`, `create_positions_from_results`, `process_pending_entries`, `check_open_positions`, `fetch_price`, `get_portfolio_summary`, `get_positions`, `get_symbol_stats`
-- **State**: In-memory dict from `trades_history.json`, persisted on every mutation
-
-[Dependencies]
-
-No new packages required. The existing `apscheduler==3.10.4` in `requirements.txt` is sufficient for the scheduled background task. `yfinance` (already used) is used for price fetching.
-
-[Testing]
-
-No automated test framework exists; testing will be manual via the dashboard and API.
-
-1. Run scanner → generate watchlist with at least one "BUY NOW" signal
-2. Start API server → confirm scheduler initializes
-3. Check `trades_history.json` → confirm pending_entry positions created
-4. Wait for scheduler to run → confirm entry prices fetched and positions become active
-5. Manually verify portfolio dashboard displays correct numbers
-6. Test manual refresh button `/api/trades/refresh-prices`
-
-[Implementation Order]
-
-Construction in topological dependency order, ensuring each step can be verified before the next begins.
-
-1. **Create `trade_tracker.py`** with full `TradeTracker` class and all position/portfolio methods (this is the core module, no dependencies on other changes)
-2. **Add trade-creation hook in `nse_scanner_api.py`** — modify `run_scan_task()` to call `TradeTracker.create_positions_from_results()` after scan completes
-3. **Add API endpoints in `nse_scanner_api.py`** — `/api/trades/portfolio`, `/api/trades/positions`, `/api/trades/symbol-stats`, `/api/trades/refresh-prices`
-4. **Add scheduler in `nse_scanner_api.py`** — APScheduler integration with `check_trades()` job, market hours detection, startup initialization in `lifespan()`
-5. **Update `dashboard.html`** — Add portfolio tab with position tables, summary cards, and JavaScript functions for fetching/rendering trade data
-6. **Integration test** — Run full pipeline: scan → trade creation → price check → dashboard display
+1. Fix Nifty 50 1H symbol mapping in `nse_swing_scanner.py` (line ~755, one-line change)
+2. Add bearish scan pass in `nse_swing_scanner.py` (modify `process_stock()` + `run_scanner()`)
+3. Add Nifty 65x lot multiplier in `trade_tracker.py` (modify `check_open_positions()`)
+4. Add `diagnose_health()` method to `TradeTracker` in `trade_tracker.py`
+5. Add date-range filtering to `get_positions()` in `trade_tracker.py`
+6. Add `/api/trades/diagnostics` endpoint and update `/api/trades/positions` with date filtering in `nse_scanner_api.py`
+7. Update `templates/dashboard.html` with date picker, Nifty P&L fix, DB health display
