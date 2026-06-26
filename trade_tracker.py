@@ -26,12 +26,17 @@ MARKET_OPEN_MIN = 30
 MARKET_CLOSE_HOUR = 15
 MARKET_CLOSE_MIN = 30
 
-# Persistent storage path
-if os.path.exists("/data"):
-    DATA_DIR = "/data"
-else:
-    DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+# Persistent storage path — Render persistent disk at /data
+# Always try /data first, fall back to local directory
+DATA_DIR = "/data"
 DB_PATH = os.path.join(DATA_DIR, "trades_history.db")
+# Ensure the directory exists on Render
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+except (OSError, PermissionError):
+    # Fallback to local directory if /data is not writable
+    DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+    DB_PATH = os.path.join(DATA_DIR, "trades_history.db")
 
 STATUS_PENDING_ENTRY = "pending_entry"
 STATUS_ACTIVE = "active"
