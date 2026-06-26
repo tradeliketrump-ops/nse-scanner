@@ -26,16 +26,27 @@ MARKET_OPEN_MIN = 30
 MARKET_CLOSE_HOUR = 15
 MARKET_CLOSE_MIN = 30
 
-# Persistent storage path — Render persistent disk at /data
-# Always try /data first, fall back to local directory
-DATA_DIR = "/data"
-DB_PATH = os.path.join(DATA_DIR, "trades_history.db")
-# Ensure the directory exists on Render
-try:
-    os.makedirs(DATA_DIR, exist_ok=True)
-except (OSError, PermissionError):
-    # Fallback to local directory if /data is not writable
-    DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+# Persistent storage path
+# Render: /opt/render/project/src/ is writable. Persistent disk at /data
+# may exist after manual disk setup — detect the best location at import time.
+import tempfile
+_DATA_DIR_CANDIDATES = ["/data", "/opt/render/project/src", os.path.dirname(os.path.abspath(__file__))]
+DATA_DIR = None
+DB_PATH = None
+for _candidate in _DATA_DIR_CANDIDATES:
+    try:
+        os.makedirs(_candidate, exist_ok=True)
+        _test = os.path.join(_candidate, ".write_test")
+        with open(_test, "w") as _f: _f.write("ok")
+        os.remove(_test)
+        DATA_DIR = _candidate
+        DB_PATH = os.path.join(DATA_DIR, "trades_history.db")
+        break
+    except (OSError, PermissionError):
+        continue
+if DB_PATH is None:
+    # Ultimate fallback — temp directory
+    DATA_DIR = tempfile.gettempdir()
     DB_PATH = os.path.join(DATA_DIR, "trades_history.db")
 
 STATUS_PENDING_ENTRY = "pending_entry"
