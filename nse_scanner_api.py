@@ -536,6 +536,47 @@ def debug_1h(symbol: str):
     info["analyze_result"] = {"signal": result[1], "detail": result[2], "zone": result[3]}
     return info
 
+# ─── Debug: filesystem info ─────────────────────────────────────────
+@app.get("/api/debug/disk")
+def debug_disk():
+    """Debug endpoint to check disk mounts and permissions."""
+    import os, subprocess
+    info = {}
+    # Check /data
+    info["data_exists"] = os.path.exists("/data")
+    info["data_is_dir"] = os.path.isdir("/data") if info["data_exists"] else False
+    if info["data_is_dir"]:
+        info["data_writable"] = os.access("/data", os.W_OK)
+        try:
+            info["data_contents"] = os.listdir("/data")
+        except:
+            info["data_contents"] = "N/A"
+        try:
+            st = os.stat("/data")
+            info["data_uid"] = st.st_uid
+            info["data_gid"] = st.st_gid
+            info["data_mode"] = oct(st.st_mode)
+        except:
+            pass
+    # Check /opt/render/project/src
+    info["src_exists"] = os.path.exists("/opt/render/project/src")
+    info["src_writable"] = os.access("/opt/render/project/src", os.W_OK) if info["src_exists"] else False
+    # Current user
+    info["cwd"] = os.getcwd()
+    try:
+        info["whoami"] = os.popen("whoami").read().strip()
+    except: pass
+    # Try mkdir
+    try:
+        os.makedirs("/data", exist_ok=True)
+        test_path = "/data/test_write.txt"
+        with open(test_path, "w") as f: f.write("ok")
+        os.remove(test_path)
+        info["mkdir_test"] = "PASS"
+    except Exception as e:
+        info["mkdir_test"] = f"FAIL: {e}"
+    return info
+
 # ─── Run (for local development) ────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
