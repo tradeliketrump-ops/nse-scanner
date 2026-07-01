@@ -330,8 +330,8 @@ class TradeTracker:
 
     # ─── Entry Processing ───────────────────────────────────────────
 
-    def process_pending_entries(self) -> list[dict]:
-        if not self._is_market_hours(datetime.now(), allow_before_open=False):
+    def process_pending_entries(self, force: bool = False) -> list[dict]:
+        if not force and not self._is_market_hours(datetime.now(), allow_before_open=False):
             return []
         today_str = datetime.now().strftime("%Y-%m-%d")
         processed = []
