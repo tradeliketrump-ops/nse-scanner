@@ -1,6 +1,6 @@
 """
-Trade Performance Tracker (PostgreSQL / Supabase)
-==================================================
+Trade Performance Tracker (PostgreSQL / Supabase via pg8000)
+============================================================
 Tracks "BUY NOW" signals from the NSE Swing Scanner as live positions,
 monitors them against 5% stop-loss and 10% profit targets,
 and provides portfolio performance reporting.
@@ -38,12 +38,17 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 USE_SUPABASE = bool(DATABASE_URL and DATABASE_URL.startswith("postgresql"))
 
 if USE_SUPABASE:
-    import psycopg2
-    import psycopg2.extras
-    DB_INFO = {"type": "postgresql", "url": DATABASE_URL[:60] + "..."}
+    import pg8000
+    import urllib.parse as urlparse
+    _parsed = urlparse.urlparse(DATABASE_URL)
+    DB_USER = _parsed.username or "postgres"
+    DB_PASS = _parsed.password or ""
+    DB_HOST = _parsed.hostname or "localhost"
+    DB_PORT = _parsed.port or 5432
+    DB_NAME = _parsed.path.lstrip("/") or "postgres"
+    DB_INFO = {"type": "postgresql", "host": DB_HOST}
 else:
     import sqlite3
-    # Local SQLite path
     _local_dir = os.path.dirname(os.path.abspath(__file__))
     _local_db = os.path.join(_local_dir, "trades_history.db")
     DB_INFO = {"type": "sqlite", "path": _local_db}
@@ -62,7 +67,14 @@ class TradeTracker:
     def _connect(self):
         """Get a new database connection."""
         if USE_SUPABASE:
-            conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            conn = pg8000.connect(
+                user=DB_USER, password=DB_PASS, host=DB_HOST,
+                port=DB_PORT, database=DB_NAME, ssl_context=ctx
+            )
             conn.autocommit = False
             return conn
         else:
@@ -72,16 +84,21 @@ class TradeTracker:
             conn.execute("PRAGMA journal_mode=WAL")
             return conn
 
-    def _cur(self, conn):
-        """Get a cursor from a connection."""
+    def _row_to_dict(self, row, cursor) -> dict:
+        """Convert a single database row to a dict."""
+        if row is None:
+            return None
         if USE_SUPABASE:
-            return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        return conn.cursor()
+            return dict(zip([d[0] for d in cursor.description], row))
+        return dict(row)
 
-    def _rows_to_dicts(self, rows, curs) -> list[dict]:
+    def _rows_to_dicts(self, rows, cursor) -> list[dict]:
         """Convert database rows to dicts."""
+        if not rows:
+            return []
         if USE_SUPABASE:
-            return [dict(r) for r in rows]
+            cols = [d[0] for d in cursor.description]
+            return [dict(zip(cols, r)) for r in rows]
         return [dict(r) for r in rows]
 
     def _init_db(self):
@@ -89,7 +106,7 @@ class TradeTracker:
         with _lock:
             conn = self._connect()
             try:
-                cur = self._cur(conn)
+                cur = conn.cursor()
                 if USE_SUPABASE:
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS positions (
@@ -161,18 +178,12 @@ class TradeTracker:
         with _lock:
             conn = self._connect()
             try:
-                cur = self._cur(conn)
+                cur = conn.cursor()
                 if status_filter:
-                    if USE_SUPABASE:
-                        cur.execute(
-                            "SELECT * FROM positions WHERE status = %s ORDER BY signal_date DESC, symbol ASC",
-                            (status_filter,)
-                        )
-                    else:
-                        cur.execute(
-                            "SELECT * FROM positions WHERE status = ? ORDER BY signal_date DESC, symbol ASC",
-                            (status_filter,)
-                        )
+                    cur.execute(
+                        "SELECT * FROM positions WHERE status = ? ORDER BY signal_date DESC, symbol ASC",
+                        (status_filter,)
+                    )
                 else:
                     cur.execute("SELECT * FROM positions ORDER BY signal_date DESC, symbol ASC")
                 rows = cur.fetchall()
@@ -185,25 +196,15 @@ class TradeTracker:
         with _lock:
             conn = self._connect()
             try:
-                cur = self._cur(conn)
-                if USE_SUPABASE:
-                    columns = ", ".join(data.keys())
-                    placeholders = ", ".join("%s" for _ in data)
-                    updates = ", ".join(f"{k}=EXCLUDED.{k}" for k in data.keys() if k != "id")
-                    sql = f"""
-                        INSERT INTO positions ({columns}) VALUES ({placeholders})
-                        ON CONFLICT(id) DO UPDATE SET {updates}
-                    """
-                    cur.execute(sql, list(data.values()))
-                else:
-                    columns = ", ".join(data.keys())
-                    placeholders = ", ".join("?" * len(data))
-                    updates = ", ".join(f"{k}=excluded.{k}" for k in data.keys() if k != "id")
-                    sql = f"""
-                        INSERT INTO positions ({columns}) VALUES ({placeholders})
-                        ON CONFLICT(id) DO UPDATE SET {updates}
-                    """
-                    cur.execute(sql, list(data.values()))
+                cur = conn.cursor()
+                columns = ", ".join(data.keys())
+                placeholders = ", ".join("?" * len(data))
+                updates = ", ".join(f"{k}=excluded.{k}" for k in data.keys() if k != "id")
+                sql = f"""
+                    INSERT INTO positions ({columns}) VALUES ({placeholders})
+                    ON CONFLICT(id) DO UPDATE SET {updates}
+                """
+                cur.execute(sql, list(data.values()))
                 conn.commit()
             except Exception as e:
                 logger.error(f"DB upsert error for {pos_id}: {e}")
@@ -278,20 +279,14 @@ class TradeTracker:
             with _lock:
                 conn = self._connect()
                 try:
-                    cur = self._cur(conn)
-                    if USE_SUPABASE:
-                        cur.execute(
-                            "SELECT * FROM positions WHERE symbol = %s AND status IN (%s, %s) LIMIT 1",
-                            (symbol, STATUS_PENDING_ENTRY, STATUS_ACTIVE)
-                        )
-                    else:
-                        cur.execute(
-                            "SELECT * FROM positions WHERE symbol = ? AND status IN (?, ?) LIMIT 1",
-                            (symbol, STATUS_PENDING_ENTRY, STATUS_ACTIVE)
-                        )
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT * FROM positions WHERE symbol = ? AND status IN (?, ?) LIMIT 1",
+                        (symbol, STATUS_PENDING_ENTRY, STATUS_ACTIVE)
+                    )
                     row_data = cur.fetchone()
                     if row_data:
-                        existing = dict(row_data)
+                        existing = self._row_to_dict(row_data, cur)
                 finally:
                     conn.close()
 
@@ -384,43 +379,27 @@ class TradeTracker:
         with _lock:
             conn = self._connect()
             try:
-                cur = self._cur(conn)
-                if USE_SUPABASE:
-                    cur.execute(
-                        "SELECT * FROM positions WHERE status = %s AND signal_date <= %s",
-                        (STATUS_PENDING_ENTRY, today_str)
-                    )
-                else:
-                    cur.execute(
-                        "SELECT * FROM positions WHERE status = ? AND signal_date <= ?",
-                        (STATUS_PENDING_ENTRY, today_str)
-                    )
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT * FROM positions WHERE status = ? AND signal_date <= ?",
+                    (STATUS_PENDING_ENTRY, today_str)
+                )
                 rows = self._rows_to_dicts(cur.fetchall(), cur)
                 for pos in rows:
                     entry_price = self.fetch_price(pos["symbol"], today_str)
                     if entry_price is None or entry_price <= 0:
                         price = self.fetch_price(pos["symbol"])
                         if price:
-                            if USE_SUPABASE:
-                                cur.execute("UPDATE positions SET current_price = %s WHERE id = %s", (price, pos["id"]))
-                            else:
-                                cur.execute("UPDATE positions SET current_price = ? WHERE id = ?", (price, pos["id"]))
+                            cur.execute("UPDATE positions SET current_price = ? WHERE id = ?", (price, pos["id"]))
                         continue
                     stop_loss = round(entry_price * (1 - STOP_LOSS_PCT), 2)
                     target = round(entry_price * (1 + PROFIT_TARGET_PCT), 2)
                     quantity = max(1, int(CAPITAL_PER_POSITION / entry_price))
-                    if USE_SUPABASE:
-                        cur.execute("""
-                            UPDATE positions SET entry_date=%s, entry_price=%s, stop_loss=%s, target=%s,
-                            quantity=%s, status=%s, current_price=%s
-                            WHERE id=%s
-                        """, (today_str, entry_price, stop_loss, target, quantity, STATUS_ACTIVE, entry_price, pos["id"]))
-                    else:
-                        cur.execute("""
-                            UPDATE positions SET entry_date=?, entry_price=?, stop_loss=?, target=?,
-                            quantity=?, status=?, current_price=?
-                            WHERE id=?
-                        """, (today_str, entry_price, stop_loss, target, quantity, STATUS_ACTIVE, entry_price, pos["id"]))
+                    cur.execute("""
+                        UPDATE positions SET entry_date=?, entry_price=?, stop_loss=?, target=?,
+                        quantity=?, status=?, current_price=?
+                        WHERE id=?
+                    """, (today_str, entry_price, stop_loss, target, quantity, STATUS_ACTIVE, entry_price, pos["id"]))
                     processed.append({"id": pos["id"], "symbol": pos["symbol"], "entry_price": entry_price, "quantity": quantity})
                     logger.info(f"Position entered: {pos['id']} @ ₹{entry_price}")
                 if processed:
@@ -439,11 +418,8 @@ class TradeTracker:
         with _lock:
             conn = self._connect()
             try:
-                cur = self._cur(conn)
-                if USE_SUPABASE:
-                    cur.execute("SELECT * FROM positions WHERE status = %s", (STATUS_ACTIVE,))
-                else:
-                    cur.execute("SELECT * FROM positions WHERE status = ?", (STATUS_ACTIVE,))
+                cur = conn.cursor()
+                cur.execute("SELECT * FROM positions WHERE status = ?", (STATUS_ACTIVE,))
                 rows = self._rows_to_dicts(cur.fetchall(), cur)
                 for pos in rows:
                     current_price = self.fetch_price(pos["symbol"])
@@ -458,22 +434,13 @@ class TradeTracker:
                     if sl and current_price <= sl:
                         raw_pnl = round((current_price - entry) * (pos["quantity"] or 1), 2)
                         pnl = raw_pnl * 65 if pos["symbol"] in ("NIFTY50", "^NSEI") else raw_pnl
-                        if USE_SUPABASE:
-                            cur.execute("""
-                                UPDATE positions SET close_date=%s, close_price=%s, close_reason=%s,
-                                pnl=%s, pnl_percent=%s, status=%s, current_price=%s
-                                WHERE id=%s
-                            """, (date.today().isoformat(), current_price, "stop_loss",
-                                  pnl, round(raw_pnl / entry * 100, 2) if entry else 0,
-                                  STATUS_CLOSED, current_price, pos["id"]))
-                        else:
-                            cur.execute("""
-                                UPDATE positions SET close_date=?, close_price=?, close_reason=?,
-                                pnl=?, pnl_percent=?, status=?, current_price=?
-                                WHERE id=?
-                            """, (date.today().isoformat(), current_price, "stop_loss",
-                                  pnl, round(raw_pnl / entry * 100, 2) if entry else 0,
-                                  STATUS_CLOSED, current_price, pos["id"]))
+                        cur.execute("""
+                            UPDATE positions SET close_date=?, close_price=?, close_reason=?,
+                            pnl=?, pnl_percent=?, status=?, current_price=?
+                            WHERE id=?
+                        """, (date.today().isoformat(), current_price, "stop_loss",
+                              pnl, round(raw_pnl / entry * 100, 2) if entry else 0,
+                              STATUS_CLOSED, current_price, pos["id"]))
                         closed.append({"id": pos["id"], "symbol": pos["symbol"], "reason": "stop_loss", "pnl": pnl})
                         continue
 
@@ -481,30 +448,18 @@ class TradeTracker:
                     if tgt and current_price >= tgt:
                         raw_pnl = round((current_price - entry) * (pos["quantity"] or 1), 2)
                         pnl = raw_pnl * 65 if pos["symbol"] in ("NIFTY50", "^NSEI") else raw_pnl
-                        if USE_SUPABASE:
-                            cur.execute("""
-                                UPDATE positions SET close_date=%s, close_price=%s, close_reason=%s,
-                                pnl=%s, pnl_percent=%s, status=%s, current_price=%s
-                                WHERE id=%s
-                            """, (date.today().isoformat(), current_price, "target",
-                                  pnl, round(raw_pnl / entry * 100, 2) if entry else 0,
-                                  STATUS_CLOSED, current_price, pos["id"]))
-                        else:
-                            cur.execute("""
-                                UPDATE positions SET close_date=?, close_price=?, close_reason=?,
-                                pnl=?, pnl_percent=?, status=?, current_price=?
-                                WHERE id=?
-                            """, (date.today().isoformat(), current_price, "target",
-                                  pnl, round(raw_pnl / entry * 100, 2) if entry else 0,
-                                  STATUS_CLOSED, current_price, pos["id"]))
+                        cur.execute("""
+                            UPDATE positions SET close_date=?, close_price=?, close_reason=?,
+                            pnl=?, pnl_percent=?, status=?, current_price=?
+                            WHERE id=?
+                        """, (date.today().isoformat(), current_price, "target",
+                              pnl, round(raw_pnl / entry * 100, 2) if entry else 0,
+                              STATUS_CLOSED, current_price, pos["id"]))
                         closed.append({"id": pos["id"], "symbol": pos["symbol"], "reason": "target", "pnl": pnl})
                         continue
 
                     # Just update price
-                    if USE_SUPABASE:
-                        cur.execute("UPDATE positions SET current_price = %s WHERE id = %s", (current_price, pos["id"]))
-                    else:
-                        cur.execute("UPDATE positions SET current_price = ? WHERE id = ?", (current_price, pos["id"]))
+                    cur.execute("UPDATE positions SET current_price = ? WHERE id = ?", (current_price, pos["id"]))
 
                 if closed:
                     conn.commit()
@@ -520,25 +475,16 @@ class TradeTracker:
         with _lock:
             conn = self._connect()
             try:
-                cur = self._cur(conn)
-                if USE_SUPABASE:
-                    cur.execute(
-                        "SELECT * FROM positions WHERE status IN (%s, %s)",
-                        (STATUS_ACTIVE, STATUS_PENDING_ENTRY)
-                    )
-                else:
-                    cur.execute(
-                        "SELECT * FROM positions WHERE status IN (?, ?)",
-                        (STATUS_ACTIVE, STATUS_PENDING_ENTRY)
-                    )
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT * FROM positions WHERE status IN (?, ?)",
+                    (STATUS_ACTIVE, STATUS_PENDING_ENTRY)
+                )
                 rows = self._rows_to_dicts(cur.fetchall(), cur)
                 for pos in rows:
                     price = self.fetch_price(pos["symbol"])
                     if price and price > 0:
-                        if USE_SUPABASE:
-                            cur.execute("UPDATE positions SET current_price = %s WHERE id = %s", (price, pos["id"]))
-                        else:
-                            cur.execute("UPDATE positions SET current_price = ? WHERE id = ?", (price, pos["id"]))
+                        cur.execute("UPDATE positions SET current_price = ? WHERE id = ?", (price, pos["id"]))
                         updated += 1
                     else:
                         failed += 1
@@ -554,7 +500,7 @@ class TradeTracker:
         with _lock:
             conn = self._connect()
             try:
-                cur = self._cur(conn)
+                cur = conn.cursor()
                 cur.execute("SELECT * FROM positions")
                 rows = self._rows_to_dicts(cur.fetchall(), cur)
             finally:
@@ -625,7 +571,7 @@ class TradeTracker:
         with _lock:
             conn = self._connect()
             try:
-                cur = self._cur(conn)
+                cur = conn.cursor()
                 cur.execute("SELECT * FROM positions")
                 rows = self._rows_to_dicts(cur.fetchall(), cur)
             finally:
