@@ -171,9 +171,10 @@ tr:hover td { background:rgba(0,212,170,0.05); }
       <span id="dateFilterStatus" class="text-muted"></span>
     </div>
 
-    <!-- Refresh Button -->
+    <!-- Backup / Refresh -->
     <div class="card" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
       <button class="btn btn-primary btn-sm" onclick="refreshPortfolio()">🔄 Refresh Prices</button>
+      <a class="btn btn-secondary btn-sm" href="/api/trades/backup" download>💾 Backup DB</a>
       <span id="refreshStatus" class="text-muted"></span>
       <span style="flex:1"></span>
       <span id="lastRefreshTime" class="text-muted"></span>
