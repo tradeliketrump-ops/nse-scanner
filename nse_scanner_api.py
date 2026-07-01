@@ -467,62 +467,6 @@ def trades_diagnostics():
         return {"error": str(e)}
 
 # ─── DB Backup / Restore ────────────────────────────────────────────
-import shutil
-
-@app.get("/api/trades/backup")
-def trades_backup():
-    """Download the SQLite database file for backup."""
-    try:
-        tracker = get_tracker()
-        db_path = tracker.db_path
-        if not os.path.exists(db_path):
-            raise HTTPException(404, "Database file not found")
-        return FileResponse(db_path, media_type="application/octet-stream",
-                            filename="trades_history.db")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Backup error: {e}")
-        raise HTTPException(500, str(e))
-
-@app.post("/api/trades/restore")
-async def trades_restore(file: bytes = None):
-    """Upload a previously backed up SQLite database file to restore positions."""
-    try:
-        tracker = get_tracker()
-        db_path = tracker.db_path
-        backup_dir = os.path.dirname(db_path)
-        backup_path = os.path.join(backup_dir, "trades_history_backup.db")
-        # Read the uploaded file bytes from request body
-        body = await file if hasattr(file, '__await__') else file
-        with open(backup_path, "wb") as f:
-            f.write(body)
-        # Verify it's a valid SQLite DB
-        import sqlite3
-        try:
-            test_conn = sqlite3.connect(backup_path)
-            test_conn.execute("SELECT COUNT(*) FROM positions")
-            test_conn.close()
-        except Exception:
-            os.remove(backup_path)
-            raise HTTPException(400, "Invalid database file — not a valid SQLite trades database")
-        # Replace active DB with backup
-        if os.path.exists(db_path):
-            os.remove(db_path)
-        shutil.copy2(backup_path, db_path)
-        os.remove(backup_path)
-        # Re-init tracker with restored DB
-        from trade_tracker import reset_tracker
-        reset_tracker()
-        new_tracker = get_tracker()
-        health = new_tracker.diagnose_health()
-        return {"status": "restored", "message": f"Database restored with {health['total_rows']} positions", "health": health}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Restore error: {e}")
-        raise HTTPException(400, f"Restore failed: {e}")
-
 @app.get("/api/trades/activate-pending")
 def trades_activate_pending():
     """Manually activate all pending entries immediately using current prices."""

@@ -1,91 +1,88 @@
-# Implementation Plan — Remove 1-Hour Analysis, Generate Signals from Daily Data
+# Implementation Plan — Migrate from SQLite to Supabase PostgreSQL
 
 ## Overview
 
-Replace the 1-hour timeframe TV-style signal generation with daily timeframe signal generation inside `process_stock()`, eliminating the need for separate 1H data downloads and the `analyze_1h()` function.
+Replace SQLite storage with Supabase PostgreSQL to solve the permanent data persistence problem on Render's free tier (ephemeral filesystem wiped on spin-down/deploy).
 
 ## Context
 
-Currently, the scanner does two passes: (1) daily screening via `process_stock()` which computes HA/E20/S50/RSI and qualifies stocks based on breakout conditions, then (2) a parallel 1-hour analysis via `analyze_1h()` which downloads 10 days of 1-hour data per stock and computes ADX/DMI + pivot/ATR levels to produce BUY-R/BUY-B/SELL-R/SELL-B signals. This is slow (~30-40s for 500 stocks) and adds complexity. Since the user wants signals based on daily data only, all signal logic can be moved into `process_stock()` using the same daily OHLC data already downloaded.
+Render free tier spins down after 15 minutes of inactivity. On next request, it starts a new container with a fresh filesystem — wiping the SQLite database file. Supabase PostgreSQL stores data externally, surviving any deploy, spin-down, or container restart. The entire `TradeTracker` class needs to be rewritten from `sqlite3` calls to `psycopg2` (PostgreSQL driver), keeping the exact same method signatures so no other code changes are needed.
 
 ## Types
 
-No new data types.
-
-All changes are logical: existing signal constants (`BUY-R`, `BUY-B`, `SELL-R`, `SELL-B`, `NEUTRAL`) and helper functions (`adx_dmi`, `compute_daily_levels`, `heiken_ashi`, `ema`, `rsi`) remain unchanged.
+No new types. All existing method signatures (`create_positions_from_results`, `process_pending_entries`, `check_open_positions`, `get_positions`, `get_portfolio_summary`, `get_symbol_stats`, `diagnose_health`, etc.) remain identical.
 
 ## Files
 
 ### Files Modified
 
-1. **`nse_swing_scanner.py`** — Major refactor:
-   - Remove `HOURS_LOOKBACK` constant (no longer needed for 1H data)
-   - Remove `analyze_1h()` function entirely (~115 lines)
-   - Modify `process_stock()` to compute daily ADX/DMI + daily pivot/ATR levels and produce signals
-   - Modify `run_scanner()` to remove Step 3 (parallel 1H analysis) and the bearish pass
-   - Update CLI help text
+1. **`requirements.txt`** — Add `psycopg2-binary`
+2. **`trade_tracker.py`** — Complete rewrite of storage layer from SQLite to PostgreSQL
+3. **`nse_scanner_api.py`** — Remove backup/restore/activate-pending endpoints, simplify diagnostics
+4. **`templates/dashboard.html`** — Remove Backup DB button
+5. **`render.yaml`** — Add `SUPABASE_DB_URL` env var
 
-2. **`nse_scanner_api.py`** — Minor cleanup:
-   - Remove `run_intraday_scan()` function from scheduler
-   - Remove the intraday CronTrigger jobs from `start_scheduler()`
-   - Change `analyze_1h_mode=True` to `analyze_1h_mode=False` in `run_scan_task()`
-   - Update docstring
+### Files Unchanged
 
-3. **`templates/dashboard.html`** — Optional:
-   - Column header "1H Setup" / "1H Detail" can stay as-is (UI unchanged)
+- `nse_swing_scanner.py` — No changes needed
 
 ## Functions
 
-### Modified Functions
+### Modified Functions in `trade_tracker.py`
 
-1. **`nse_swing_scanner.py:process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max, mm, mv, early, bearish_mode=False)`**
-   - Remove `bearish_mode` parameter
-   - After computing HA/E20/S50/RSI and breakout detection, compute daily ADX/DMI using `adx_dmi(df["High"], df["Low"], df["Close"])`
-   - Compute daily structural levels using `compute_daily_levels(sym)` (note: this function downloads its own data — can be optimized but not necessary)
-   - Apply the same TV-style signal logic from `analyze_1h()` but using daily HA values instead of 1H HA values:
-     - `bull_trend`: HA_C > E20 && DI+ > DI- && ADX > 20 && RSI < 80
-     - `bear_trend`: HA_C < E20 && DI- > DI+ && ADX > 20 && RSI > 20
-     - Level checks: `ha_close <= buy_rev` for BUY-R, `ha_close > brkout and ha_prev <= brkout` for BUY-B, `ha_close >= sell_rev` for SELL-R, `ha_close < brkdown and ha_prev >= brkdown` for SELL-B
-   - Set `1H_Setup`, `1H_Detail`, `1H_Zone` fields directly
-   - Nifty 50: same logic but skip volume/mcap/RSI filters
-   - Return result dict with all fields populated
+All methods maintain same signatures. Internal SQLite replaced with PostgreSQL:
 
-2. **`nse_swing_scanner.py:run_scanner()`**
-   - Remove Step 2a/2b split — one single screening pass
-   - Remove Step 3 (1H analysis) entirely
-   - Update step count to 3 steps: Download → Screen → Rank & Export
+- `__init__` — Connect to Supabase using `DATABASE_URL` env var or fallback to SQLite locally
+- `_connect()` — Return a `psycopg2` connection instead of `sqlite3`
+- `_init_db()` — Run CREATE TABLE IF NOT EXISTS for PostgreSQL syntax
+- `_row_to_dict()` — Same, adapt for psycopg2 cursor description
+- `_get_positions()` — Replace `conn.execute()` with `cur.execute()`, use `cur.fetchall()`
+- `_upsert_position()` — Replace `INSERT ... ON CONFLICT(id) DO UPDATE` with PostgreSQL `INSERT ... ON CONFLICT(id) DO UPDATE`
+- `create_positions_from_results()` — Same logic, same signature
+- `process_pending_entries()` — Same logic
+- `check_open_positions()` — Same logic
+- `get_portfolio_summary()` — Same logic
+- `get_positions()` — Same logic
+- `get_symbol_stats()` — Same logic
+- `diagnose_health()` — Simplified (no file size, return DB_URL prefix)
+- `_is_market_hours()` — Same (static, no DB change)
 
-### Removed Functions
+### Removed Functions in `nse_scanner_api.py`
 
-1. **`nse_swing_scanner.py:analyze_1h(symbol)`** — Entire function removed
-2. **`nse_swing_scanner.py`** — `HOURS_LOOKBACK` constant removed
-3. **`nse_scanner_api.py:run_intraday_scan()`** — Entire function removed
+- `trades_backup()` — removed (no longer needed)
+- `trades_restore()` — removed
+- `trades_activate_pending()` — keep for manual activation
+- `rebuild_positions_from_csv()` — removed (not needed with persistent DB)
 
-### New Functions
+### Modified Functions in `nse_scanner_api.py`
 
-None.
+- `trades_diagnostics()` — No longer reads DB file size, just returns row counts
 
 ## Classes
 
-No class modifications.
+No new classes. `TradeTracker` keeps all same methods.
 
 ## Dependencies
 
-No changes. `adx_dmi()` and `compute_daily_levels()` are already imported at the top of `nse_swing_scanner.py`.
+- Add `psycopg2-binary` to `requirements.txt`
+- No other new dependencies
+
+## Environment Variables
+
+- `DATABASE_URL` — Supabase PostgreSQL connection string (set on Render as environment variable)
+- Fallback: if `DATABASE_URL` not set, use SQLite (for local development)
 
 ## Testing
 
-- Verify `process_stock()` runs without errors on typical stock data
-- Verify CSV output includes `1H_Setup` column with values BUY-R, BUY-B, SELL-R, SELL-B, NEUTRAL
-- Verify Nifty 50 appears with signals
-- Verify no "1-hour" or "1H data" mentions in scan output
-- Verify scan completes in ~10-15s (was ~30-40s with 1H analysis)
+- Verify connection to Supabase from local machine using the connection string
+- Run a scan → positions should persist in Supabase
+- Verify diagnostics endpoint returns row counts
+- Verify dashboard Performance Report shows positions
 
 ## Implementation Order
 
-1. Remove `HOURS_LOOKBACK` constant and `analyze_1h()` function from `nse_swing_scanner.py`
-2. Rewrite `process_stock()` — add ADX/DMI + signal logic inside, remove bearish_mode
-3. Rewrite `run_scanner()` — single pass, no 1H step, no bearish pass
-4. Update CLI help text in main()
-5. Clean up `nse_scanner_api.py` — remove intraday scan, set analyze_1h_mode=False
-6. Remove `run_intraday_scan()` from scheduler
+1. Add `psycopg2-binary` to `requirements.txt`
+2. Rewrite `trade_tracker.py` — PostgreSQL implementation with SQLite fallback locally
+3. Update `nse_scanner_api.py` — remove backup/restore, clean up diagnostics
+4. Update `templates/dashboard.html` — remove Backup button
+5. Update `render.yaml` — add SUPABASE_DB_URL env var
