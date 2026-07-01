@@ -36,8 +36,7 @@ PRICE_LOOKBACK      = 20
 EARNINGS_EXCLUSION  = 28
 BREAKOUT_LOOKBACK   = 30
 NEAR_MISS_PCT       = 0.5
-PARALLEL_WORKERS    = 10  # for 1H analysis
-HOURS_LOOKBACK      = 10  # days of 1H data (need 33+ bars for ADX/DMI)
+PARALLEL_WORKERS    = 10  # for potential parallel operations
 
 # ─── PINE SCRIPT TV-LEVEL CONSTANTS ────────────────────────────────
 SELL_REV_MULT   = 0.29   # sellReversal = pivot + dailyATR * 0.29
@@ -473,123 +472,6 @@ def compute_daily_levels(symbol: str) -> dict | None:
         }
     except Exception as e:
         return None
-
-
-# ─── 1-HOUR ENTRY ANALYSIS (TV-STYLE) ──────────────────────────────
-def analyze_1h(symbol):
-    """
-    TV-style 1H analysis using daily pivot/ATR levels, ADX/DMI trend,
-    and breakout/breakdown/reversal signal logic.
-
-    Returns (symbol, signal_type, detail, levels_str).
-    signal_type: BUY-R, BUY-B, SELL-R, SELL-B, NEUTRAL, NO DATA
-    """
-    try:
-        df = yf.download(symbol, period=f"{HOURS_LOOKBACK}d", interval="1h",
-                         progress=False, auto_adjust=True)
-        if df.empty or len(df) < 20:
-            return symbol, "NO DATA", "Insufficient 1H data", "-"
-
-        # Handle MultiIndex
-        if isinstance(df.columns, pd.MultiIndex):
-            if symbol in df.columns.get_level_values(1).unique():
-                df = df.xs(symbol, axis=1, level=1).copy()
-            elif symbol in df.columns.get_level_values(0).unique():
-                df = df.xs(symbol, axis=1, level=0).copy()
-
-        # Compute daily structural levels
-        levels = compute_daily_levels(symbol)
-        if levels is None:
-            return symbol, "NO DATA", "Cannot compute daily levels", "-"
-
-        # Compute HA
-        ha = heiken_ashi(df)
-        ha["E20"] = ema(ha["HA_C"], 20)
-        ha["RSI"] = rsi(ha["HA_C"], 14)
-
-        lat = ha.iloc[-1]
-        prev = ha.iloc[-2] if len(ha) >= 2 else lat
-        price = df["Close"].iloc[-1]
-        ha_close = lat["HA_C"]
-        ha_prev = prev["HA_C"]
-        e20_1h = lat["E20"]
-        rsi_val = lat["RSI"]
-        ha_bullish = ha_close > lat["HA_O"]
-
-        # ADX/DMI from raw 1H data
-        adx_val, di_plus, di_minus = adx_dmi(df["High"], df["Low"], df["Close"])
-
-        # Trend conditions (matching Pine Script logic)
-        bull_trend = (
-            ha_close > e20_1h and
-            di_plus > di_minus and
-            adx_val > ADX_THRESHOLD and
-            rsi_val < RSI_EXTREME_LONG
-        )
-        bear_trend = (
-            ha_close < e20_1h and
-            di_minus > di_plus and
-            adx_val > ADX_THRESHOLD and
-            rsi_val > RSI_EXTREME_SHORT
-        )
-
-        # Level values
-        buy_rev = levels["buy_reversal"]
-        sell_rev = levels["sell_reversal"]
-        brkout = levels["breakout"]
-        brkdown = levels["breakdown"]
-        pivot = levels["pivot"]
-        daily_atr_val = levels["daily_atr"]
-
-        # Check signals
-        signal = "NEUTRAL"
-        detail_parts = []
-
-        # Buy Reversal: HA close touches/below buyReversal level + bull trend
-        buy_rev_touch = ha_close <= buy_rev
-        if buy_rev_touch and bull_trend:
-            signal = "BUY-R"
-            detail_parts.append(f"Reversal touch {buy_rev:.2f}")
-            detail_parts.append(f"ADX {adx_val:.1f} DI+ {di_plus:.1f}")
-
-        # Buy Breakout: HA close crosses above breakout level + bull trend
-        buy_breakout = ha_close > brkout and ha_prev <= brkout
-        if buy_breakout and bull_trend:
-            signal = "BUY-B"
-            detail_parts.append(f"Breakout above {brkout:.2f}")
-            detail_parts.append(f"ADX {adx_val:.1f} DI+ {di_plus:.1f}")
-
-        # Sell Reversal: HA close touches/above sellReversal level + bear trend
-        sell_rev_touch = ha_close >= sell_rev
-        if sell_rev_touch and bear_trend:
-            signal = "SELL-R"
-            detail_parts.append(f"Reversal touch {sell_rev:.2f}")
-            detail_parts.append(f"ADX {adx_val:.1f} DI- {di_minus:.1f}")
-
-        # Sell Breakdown: HA close crosses below breakdown level + bear trend
-        sell_breakdown = ha_close < brkdown and ha_prev >= brkdown
-        if sell_breakdown and bear_trend:
-            signal = "SELL-B"
-            detail_parts.append(f"Breakdown below {brkdown:.2f}")
-            detail_parts.append(f"ADX {adx_val:.1f} DI- {di_minus:.1f}")
-
-        # Build detail fallback
-        if not detail_parts:
-            if bull_trend:
-                detail_parts.append(f"Bullish ADX {adx_val:.1f} no level touch")
-            elif bear_trend:
-                detail_parts.append(f"Bearish ADX {adx_val:.1f} no level touch")
-            else:
-                detail_parts.append(f"ADX {adx_val:.1f} no clear trend")
-
-        # Levels string for dashboard
-        level_str = (f"P:{pivot:.0f} BR:{buy_rev:.0f} SR:{sell_rev:.0f} "
-                     f"BO:{brkout:.0f} BD:{brkdown:.0f} ATR:{daily_atr_val:.1f}")
-
-        return symbol, signal, " | ".join(detail_parts), level_str
-
-    except Exception as e:
-        return symbol, "NO DATA", str(e)[:80], "-"
 
 
 # ─── DATA DOWNLOAD ───────────────────────────────────────────────────

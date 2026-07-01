@@ -1,115 +1,91 @@
-# Implementation Plan — Trade Persistence, Signal Generation & Dashboard Enhancements
+# Implementation Plan — Remove 1-Hour Analysis, Generate Signals from Daily Data
 
 ## Overview
 
-Fix critical issues where trade positions disappear from the Performance Report on Render deployments, sell signals are never generated, Nifty 50 fails to produce BUY-R/BUY-B signals in the 1H analysis, and add date-range filtering for monthly performance review.
+Replace the 1-hour timeframe TV-style signal generation with daily timeframe signal generation inside `process_stock()`, eliminating the need for separate 1H data downloads and the `analyze_1h()` function.
 
 ## Context
 
-The NSE Swing Scanner runs on Render with a persistent disk mount (`/data`) for SQLite storage. However, Render disk is tied to the service — redeploying (which auto-deploys on every Git push) wipes the disk, losing all trade history. Beyond that, the scanner has several bugs: (1) `run_scanner()` builds incorrect symbol names for 1H analysis on Nifty 50 (uses "NIFTY50.NS" instead of "^NSEI"), (2) `process_stock()` only passes bullish-filtered stocks into 1H analysis, so sell signals requiring bearish daily context are never produced, (3) Nifty 50 P&L calculations don't apply the ×65 lot multiplier in `check_open_positions()` or dashboard rendering, (4) there's no date-range filtering to evaluate monthly performance. These changes span all five files: `nse_swing_scanner.py`, `trade_tracker.py`, `nse_scanner_api.py`, `templates/dashboard.html`.
+Currently, the scanner does two passes: (1) daily screening via `process_stock()` which computes HA/E20/S50/RSI and qualifies stocks based on breakout conditions, then (2) a parallel 1-hour analysis via `analyze_1h()` which downloads 10 days of 1-hour data per stock and computes ADX/DMI + pivot/ATR levels to produce BUY-R/BUY-B/SELL-R/SELL-B signals. This is slow (~30-40s for 500 stocks) and adds complexity. Since the user wants signals based on daily data only, all signal logic can be moved into `process_stock()` using the same daily OHLC data already downloaded.
 
 ## Types
 
-No new data types or classes — all changes are logic modifications to existing functions and API parameters.
+No new data types.
 
-| Existing Value | Change |
-|----------------|--------|
-| `NIFTY50_SYMBOL = "^NSEI"` | Unchanged (already correct) |
-| `NIFTY_SPOT = "^NSEI"` | Unchanged (already correct) |
-| `CAPITAL_PER_POSITION = 150000` | Unchanged |
-| `STOP_LOSS_PCT = 0.05` | Unchanged |
-| `PROFIT_TARGET_PCT = 0.10` | Unchanged |
-
-No new enums, interfaces, or type definitions required.
+All changes are logical: existing signal constants (`BUY-R`, `BUY-B`, `SELL-R`, `SELL-B`, `NEUTRAL`) and helper functions (`adx_dmi`, `compute_daily_levels`, `heiken_ashi`, `ema`, `rsi`) remain unchanged.
 
 ## Files
 
 ### Files Modified
 
-1. **`nse_swing_scanner.py`** — Two critical changes:
-   - Add a **second bearish scan pass** in `process_stock()` that returns results with the same symbol/price/sector info but skip bullish-only filters (no EMA20/SMA50/Volume/market cap filters) — essentially register all bearish stocks for 1H analysis so sell signals can fire
-   - Fix Nifty 50 1H symbol in `run_scanner()`: when building `syms_1h`, map `"NIFTY50"` → `"^NSEI"` before passing to `analyze_1h()`
+1. **`nse_swing_scanner.py`** — Major refactor:
+   - Remove `HOURS_LOOKBACK` constant (no longer needed for 1H data)
+   - Remove `analyze_1h()` function entirely (~115 lines)
+   - Modify `process_stock()` to compute daily ADX/DMI + daily pivot/ATR levels and produce signals
+   - Modify `run_scanner()` to remove Step 3 (parallel 1H analysis) and the bearish pass
+   - Update CLI help text
 
-2. **`trade_tracker.py`** — Three changes:
-   - In `check_open_positions()`: when Nifty 50 position is closed (SL or target), multiply P&L by 65 lot multiplier
-   - In `get_portfolio_summary()` / `get_symbol_stats()`: add Nifty 65x multiplier handling for P&L display consistency
-   - Add a `diagnose_health()` method to report DB path, row count, disk usage
+2. **`nse_scanner_api.py`** — Minor cleanup:
+   - Remove `run_intraday_scan()` function from scheduler
+   - Remove the intraday CronTrigger jobs from `start_scheduler()`
+   - Change `analyze_1h_mode=True` to `analyze_1h_mode=False` in `run_scan_task()`
+   - Update docstring
 
-3. **`nse_scanner_api.py`** — Two new endpoints:
-   - `GET /api/trades/diagnostics` — returns DB health info (file path, size, position counts by status)
-   - `GET /api/trades/positions?status=active&from=2026-06-01&to=2026-06-26` — adds optional `from` and `to` query parameters for date-range filtering on `signal_date`
-
-4. **`templates/dashboard.html`** — Three changes:
-   - Add **date range picker** (two `<input type="date">` fields + filter button) in the Performance Report tab
-   - Fix Nifty P&L display to apply ×65 lot multiplier when symbol is NIFTY50
-   - Show DB health stats at the bottom of Performance Report tab
-   - Improve "0 positions" empty state to show meaningful message
-
-No new files, no deleted files, no config changes.
+3. **`templates/dashboard.html`** — Optional:
+   - Column header "1H Setup" / "1H Detail" can stay as-is (UI unchanged)
 
 ## Functions
 
 ### Modified Functions
 
-1. **`nse_swing_scanner.py:run_scanner()`** (line ~753)
-   - After building `syms_1h`, map `"NIFTY50"` → `"^NSEI"` for the yfinance call
-   - After the bullish scan pass, add a bearish scan pass for stocks that **failed** the bullish filter but have valid daily data, to catch sell signals
+1. **`nse_swing_scanner.py:process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max, mm, mv, early, bearish_mode=False)`**
+   - Remove `bearish_mode` parameter
+   - After computing HA/E20/S50/RSI and breakout detection, compute daily ADX/DMI using `adx_dmi(df["High"], df["Low"], df["Close"])`
+   - Compute daily structural levels using `compute_daily_levels(sym)` (note: this function downloads its own data — can be optimized but not necessary)
+   - Apply the same TV-style signal logic from `analyze_1h()` but using daily HA values instead of 1H HA values:
+     - `bull_trend`: HA_C > E20 && DI+ > DI- && ADX > 20 && RSI < 80
+     - `bear_trend`: HA_C < E20 && DI- > DI+ && ADX > 20 && RSI > 20
+     - Level checks: `ha_close <= buy_rev` for BUY-R, `ha_close > brkout and ha_prev <= brkout` for BUY-B, `ha_close >= sell_rev` for SELL-R, `ha_close < brkdown and ha_prev >= brkdown` for SELL-B
+   - Set `1H_Setup`, `1H_Detail`, `1H_Zone` fields directly
+   - Nifty 50: same logic but skip volume/mcap/RSI filters
+   - Return result dict with all fields populated
 
-2. **`nse_swing_scanner.py:process_stock()`** (~line 630)
-   - Add a `bearish_mode=False` parameter
-   - When `bearish_mode=True`, skip the bullish-qualification filters (C1/C2/C3, volume, mcap, RSI). Instead check for bearish context (HA < E20, DI- > DI+, basic ADX check). Return a simplified result that includes symbol, sector, price but with Stage="Bearish", Trend="Bearish"
+2. **`nse_swing_scanner.py:run_scanner()`**
+   - Remove Step 2a/2b split — one single screening pass
+   - Remove Step 3 (1H analysis) entirely
+   - Update step count to 3 steps: Download → Screen → Rank & Export
 
-3. **`trade_tracker.py:check_open_positions()`** (~line 377-400)
-   - After P&L calculation, check if symbol is "NIFTY50" or "^NSEI"; if so multiply P&L by 65
+### Removed Functions
 
-4. **`trade_tracker.py:get_portfolio_summary()`** (~line 440)
-   - Ensure Nifty 50 closed position P&L includes 65x multiplier in summary
-
-5. **`trade_tracker.py:get_symbol_stats()`** (~line 503)
-   - Ensure Nifty 50 P&L per-symbol stats include 65x multiplier
-
-6. **`trade_tracker.py`** — New method `diagnose_health()`
-   - Returns `{"db_path": str, "db_size_mb": float, "total_rows": int, "active_count": int, "pending_count": int, "closed_count": int}`
-
-7. **`nse_scanner_api.py:trades_positions()`** (~line 449)
-   - Add optional `from_date` and `to_date` query parameters
-   - Pass to `TradeTracker.get_positions()` filter
-
-8. **`trade_tracker.py:get_positions()`** (~line 500)
-   - Accept optional `from_date` and `to_date` kwargs
-   - Filter by `signal_date >= from_date AND signal_date <= to_date`
+1. **`nse_swing_scanner.py:analyze_1h(symbol)`** — Entire function removed
+2. **`nse_swing_scanner.py`** — `HOURS_LOOKBACK` constant removed
+3. **`nse_scanner_api.py:run_intraday_scan()`** — Entire function removed
 
 ### New Functions
 
-1. **`trade_tracker.py:diagnose_health()`** — static or instance method returning DB diagnostics dict
-2. **`nse_scanner_api.py:trades_diagnostics()`** — new FastAPI endpoint handler
+None.
 
 ## Classes
 
-No new classes. No removed classes. Only modifications to `TradeTracker`:
-
-- Add method `diagnose_health(self) -> dict`
-- Modify `get_positions(self, status_filter, from_date, to_date) -> list[dict]`
+No class modifications.
 
 ## Dependencies
 
-No new dependencies. Everything uses existing imports: `os`, `sqlite3`, `yfinance`, `pandas`, `numpy`, `FastAPI`.
+No changes. `adx_dmi()` and `compute_daily_levels()` are already imported at the top of `nse_swing_scanner.py`.
 
 ## Testing
 
-- Run `python nse_scanner_api.py` locally and verify:
-  - `GET /api/trades/diagnostics` returns valid JSON with DB info
-  - `GET /api/trades/positions?from=2026-06-01&to=2026-06-26` filters correctly
-  - Performance Report loads with date picker visible
-- Verify Nifty 50 gets mapped correctly for 1H analysis by checking scan logs
-- Verify sell signals appear when bearish stocks are scanned
+- Verify `process_stock()` runs without errors on typical stock data
+- Verify CSV output includes `1H_Setup` column with values BUY-R, BUY-B, SELL-R, SELL-B, NEUTRAL
+- Verify Nifty 50 appears with signals
+- Verify no "1-hour" or "1H data" mentions in scan output
+- Verify scan completes in ~10-15s (was ~30-40s with 1H analysis)
 
 ## Implementation Order
 
-1. Fix Nifty 50 1H symbol mapping in `nse_swing_scanner.py` (line ~755, one-line change)
-2. Add bearish scan pass in `nse_swing_scanner.py` (modify `process_stock()` + `run_scanner()`)
-3. Add Nifty 65x lot multiplier in `trade_tracker.py` (modify `check_open_positions()`)
-4. Add `diagnose_health()` method to `TradeTracker` in `trade_tracker.py`
-5. Add date-range filtering to `get_positions()` in `trade_tracker.py`
-6. Add `/api/trades/diagnostics` endpoint and update `/api/trades/positions` with date filtering in `nse_scanner_api.py`
-7. Update `templates/dashboard.html` with date picker, Nifty P&L fix, DB health display
+1. Remove `HOURS_LOOKBACK` constant and `analyze_1h()` function from `nse_swing_scanner.py`
+2. Rewrite `process_stock()` — add ADX/DMI + signal logic inside, remove bearish_mode
+3. Rewrite `run_scanner()` — single pass, no 1H step, no bearish pass
+4. Update CLI help text in main()
+5. Clean up `nse_scanner_api.py` — remove intraday scan, set analyze_1h_mode=False
+6. Remove `run_intraday_scan()` from scheduler
