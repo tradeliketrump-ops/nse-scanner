@@ -509,137 +509,160 @@ def download_data(symbols):
     return stock_data, failed, nr
 
 # ─── PROCESS STOCK (Daily) ──────────────────────────────────────────
-def process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max, mm, mv, early, bearish_mode=False):
+def process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max, mm, mv, early):
+    """Screen a single stock on daily data and compute BUY/SELL signals."""
     base = strip_ns(sym)
     sector = get_sector(sym)
+    is_nifty = (sym == NIFTY_SPOT)
     
-    # Special handling for Nifty 50 Index (skip stock-specific filters)
-    if sym == NIFTY_SPOT:
-        base = "NIFTY50"
-        sector = "Index"
-        try:
-            ha = heiken_ashi(df)
-            ha["E20"] = ema(ha["HA_C"], EMA_PERIOD)
-            ha["S50"] = sma(ha["HA_C"], SMA_PERIOD)
-            ha["RSI"] = rsi(ha["HA_C"], RSI_PERIOD)
-            lat = ha.iloc[-1]
-            lc, hc, e20, s50, rv = lat["Close"], lat["HA_C"], lat["E20"], lat["S50"], lat["RSI"]
-            if pd.isna(e20) or pd.isna(s50) or pd.isna(rv): return None
-            ds, c1, c2, c3, stage = detect_breakout(ha)
-            nmi, pa = get_nm_info(ha, e20, s50)
-            qualifies = c1 and c2 and c3
-            if not qualifies: return None
-            if use_rsi and (rv < rsi_min or rv > rsi_max): return None
-            hh = hh_hl(ha, PRICE_LOOKBACK)
-            lw = low_wick(ha)
-            vs, vr = vol_spike(df["Volume"], VOLUME_LOOKBACK)
-            sr = df["Close"].pct_change().dropna()
-            rs = rel_strength(sr, nr)
-            return {
-                "Rank": 0, "Symbol": base, "Sector": sector,
-                "Price": round(lc, 2), "Mcap_Cr": 0, "Avg_Vol": 0,
-                "EMA20": round(e20, 2), "SMA50": round(s50, 2),
-                "D_E20": round(dist(lc, e20), 2), "D_S50": round(dist(lc, s50), 2),
-                "RS": round(rs, 2), "RSI": round(rv, 2),
-                "V_Spike": "Yes" if vs else "No", "V_Ratio": round(vr, 2),
-                "HH_HL": hh, "L_Wick": lw,
-                "C1": "Yes" if c1 else "No", "C2": "Yes" if c2 else "No", "C3": "Yes" if c3 else "No",
-                "Days_Since": ds, "Stage": stage, "Near_Miss": nmi,
-                "Trend": "Bullish" if qualifies else ("Near Miss" if sum([c1,c2,c3])>=2 else "Building"),
-                "Entry": "-", "Stop": "-", "R:R": "1:3",
-                "1H_Setup": "", "1H_Detail": "", "1H_Zone": "",
-            }
-        except Exception:
-            return None
-    # Bearish mode: skip bullish qualification, just register stock for 1H sell analysis
-    if bearish_mode:
-        try:
-            ha = heiken_ashi(df)
-            ha["E20"] = ema(ha["HA_C"], EMA_PERIOD)
-            ha["S50"] = sma(ha["HA_C"], SMA_PERIOD)
-            lat = ha.iloc[-1]
-            lc = lat["Close"]
-            e20 = lat["E20"]
-            s50 = lat["S50"]
-            if pd.isna(e20) or pd.isna(s50):
-                return None
-            return {
-                "Rank": 0, "Symbol": base, "Sector": sector,
-                "Price": round(lc, 2), "Mcap_Cr": 0, "Avg_Vol": 0,
-                "EMA20": round(e20, 2), "SMA50": round(s50, 2),
-                "D_E20": round(dist(lc, e20), 2), "D_S50": round(dist(lc, s50), 2),
-                "RS": 0, "RSI": 0,
-                "V_Spike": "No", "V_Ratio": 1.0,
-                "HH_HL": False, "L_Wick": False,
-                "C1": "No", "C2": "No", "C3": "No",
-                "Days_Since": 0, "Stage": "Bearish",
-                "Near_Miss": "N/A",
-                "Trend": "Bearish",
-                "Entry": "-", "Stop": "-", "R:R": "N/A",
-                "1H_Setup": "", "1H_Detail": "", "1H_Zone": "",
-            }
-        except Exception:
-            return None
-
-    # Normal (bullish) mode
     try:
         ha = heiken_ashi(df)
         ha["E20"] = ema(ha["HA_C"], EMA_PERIOD)
         ha["S50"] = sma(ha["HA_C"], SMA_PERIOD)
         ha["RSI"] = rsi(ha["HA_C"], RSI_PERIOD)
         lat = ha.iloc[-1]
+        prev = ha.iloc[-2] if len(ha) >= 2 else lat
         lc, hc, e20, s50, rv = lat["Close"], lat["HA_C"], lat["E20"], lat["S50"], lat["RSI"]
+        ha_close = hc
+        ha_prev = prev["HA_C"]
         if pd.isna(e20) or pd.isna(s50) or pd.isna(rv): return None
+        
+        # Stage / Trend (from breakout detection)
         ds, c1, c2, c3, stage = detect_breakout(ha)
         nmi, pa = get_nm_info(ha, e20, s50)
         qualifies = c1 and c2 and c3
-        if early:
-            cm = sum([c1,c2,c3])
-            if not qualifies and cm < 2: return None
-            if not qualifies and pa > NEAR_MISS_PCT: return None
+        
+        if not is_nifty:
+            if early:
+                cm = sum([c1, c2, c3])
+                if not qualifies and cm < 2: return None
+                if not qualifies and pa > NEAR_MISS_PCT: return None
+            else:
+                if not qualifies: return None
+                if use_rsi and (rv < rsi_min or rv > rsi_max): return None
+            # Stock-specific filters (skip for Nifty)
+            av = df["Volume"].tail(VOLUME_LOOKBACK).mean()
+            if av < mv: return None
+            emc = (lc * av * VOLUME_LOOKBACK) / 1e7
+            if mm > 0 and emc < mm: return None
+        # Nifty: no volume/mcap filters, only structural
+            
+        trend = "Bullish" if qualifies else ("Near Miss" if sum([c1,c2,c3])>=2 else "Building")
+        
+        # ─── TV-Style Signal Generation (Daily) ────────────────────
+        # ADX/DMI on daily data
+        adx_val, di_plus, di_minus = adx_dmi(df["High"], df["Low"], df["Close"])
+        
+        # Daily structural levels
+        levels = compute_daily_levels(sym)
+        
+        signal = "NEUTRAL"
+        detail_parts = []
+        
+        if levels:
+            buy_rev = levels["buy_reversal"]
+            sell_rev = levels["sell_reversal"]
+            brkout = levels["breakout"]
+            brkdown = levels["breakdown"]
+            pivot = levels["pivot"]
+            daily_atr_val = levels["daily_atr"]
+            
+            # Trend conditions
+            bull_trend = (
+                ha_close > e20 and
+                di_plus > di_minus and
+                adx_val > ADX_THRESHOLD and
+                rv < RSI_EXTREME_LONG
+            )
+            bear_trend = (
+                ha_close < e20 and
+                di_minus > di_plus and
+                adx_val > ADX_THRESHOLD and
+                rv > RSI_EXTREME_SHORT
+            )
+            
+            # Buy Reversal
+            if ha_close <= buy_rev and bull_trend:
+                signal = "BUY-R"
+                detail_parts.append(f"Daily Reversal touch {buy_rev:.2f}")
+                detail_parts.append(f"ADX {adx_val:.1f} DI+ {di_plus:.1f}")
+            
+            # Buy Breakout
+            if ha_close > brkout and ha_prev <= brkout and bull_trend and signal == "NEUTRAL":
+                signal = "BUY-B"
+                detail_parts.append(f"Daily Breakout above {brkout:.2f}")
+                detail_parts.append(f"ADX {adx_val:.1f} DI+ {di_plus:.1f}")
+            
+            # Sell Reversal
+            if ha_close >= sell_rev and bear_trend and signal == "NEUTRAL":
+                signal = "SELL-R"
+                detail_parts.append(f"Daily Reversal touch {sell_rev:.2f}")
+                detail_parts.append(f"ADX {adx_val:.1f} DI- {di_minus:.1f}")
+            
+            # Sell Breakdown
+            if ha_close < brkdown and ha_prev >= brkdown and bear_trend and signal == "NEUTRAL":
+                signal = "SELL-B"
+                detail_parts.append(f"Daily Breakdown below {brkdown:.2f}")
+                detail_parts.append(f"ADX {adx_val:.1f} DI- {di_minus:.1f}")
+            
+            if not detail_parts:
+                if bull_trend:
+                    detail_parts.append(f"Bullish ADX {adx_val:.1f} no level touch")
+                elif bear_trend:
+                    detail_parts.append(f"Bearish ADX {adx_val:.1f} no level touch")
+                else:
+                    detail_parts.append(f"ADX {adx_val:.1f} no clear trend")
+            
+            level_str = (f"P:{pivot:.0f} BR:{buy_rev:.0f} SR:{sell_rev:.0f} "
+                         f"BO:{brkout:.0f} BD:{brkdown:.0f} ATR:{daily_atr_val:.1f}")
         else:
-            if not qualifies: return None
-            if use_rsi and (rv < rsi_min or rv > rsi_max): return None
-        hh = hh_hl(ha, PRICE_LOOKBACK)
-        lw = low_wick(ha)
-        vs, vr = vol_spike(df["Volume"], VOLUME_LOOKBACK)
-        sr = df["Close"].pct_change().dropna()
-        rs = rel_strength(sr, nr)
-        av = df["Volume"].tail(VOLUME_LOOKBACK).mean()
-        if av < mv: return None
-        emc = (lc * av * VOLUME_LOOKBACK) / 1e7
-        if mm > 0 and emc < mm: return None
-        ez = est_entry(df, e20)
-        sl = est_stop(df, s50, e20)
-        rr_text, _ = est_rr(ez, sl)
+            detail_parts.append("No daily levels")
+            level_str = "-"
+        
+        # Build entry/stop/rr for bullish stocks
+        if qualifies:
+            hh = hh_hl(ha, PRICE_LOOKBACK)
+            lw = low_wick(ha)
+            vs, vr = vol_spike(df["Volume"], VOLUME_LOOKBACK)
+            sr = df["Close"].pct_change().dropna()
+            rs = rel_strength(sr, nr)
+            ez = est_entry(df, e20) if not is_nifty else "-"
+            sl = est_stop(df, s50, e20) if not is_nifty else "-"
+            rr_text, _ = est_rr(ez, sl) if not is_nifty else ("1:3", 0)
+        else:
+            hh, lw, vs, vr, rs = False, False, "No", 1.0, 0
+            ez, sl, rr_text = "-", "-", "N/A"
+        
         return {
             "Rank": 0, "Symbol": base, "Sector": sector,
-            "Price": round(lc, 2), "Mcap_Cr": round(emc, 2),
-            "Avg_Vol": int(av), "EMA20": round(e20, 2), "SMA50": round(s50, 2),
+            "Price": round(lc, 2),
+            "Mcap_Cr": round(emc, 2) if not is_nifty else 0,
+            "Avg_Vol": int(av) if not is_nifty else 0,
+            "EMA20": round(e20, 2), "SMA50": round(s50, 2),
             "D_E20": round(dist(lc, e20), 2), "D_S50": round(dist(lc, s50), 2),
             "RS": round(rs, 2), "RSI": round(rv, 2),
             "V_Spike": "Yes" if vs else "No", "V_Ratio": round(vr, 2),
             "HH_HL": hh, "L_Wick": lw,
             "C1": "Yes" if c1 else "No", "C2": "Yes" if c2 else "No", "C3": "Yes" if c3 else "No",
-            "Days_Since": ds, "Stage": stage,
-            "Near_Miss": nmi,
-            "Trend": "Bullish" if qualifies else ("Near Miss" if sum([c1,c2,c3])>=2 else "Building"),
+            "Days_Since": ds, "Stage": stage, "Near_Miss": nmi,
+            "Trend": trend,
             "Entry": ez, "Stop": sl, "R:R": rr_text,
-            "1H_Setup": "", "1H_Detail": "", "1H_Zone": "",
+            "1H_Setup": signal, "1H_Detail": " | ".join(detail_parts), "1H_Zone": level_str,
         }
-    except Exception: return None
+    except Exception:
+        return None
 
 # ─── MAIN SCANNER ────────────────────────────────────────────────────
 def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
                 rsi_min=RSI_MIN, rsi_max=RSI_MAX,
                 min_mcap=MIN_MARKET_CAP_CR, min_vol=MIN_AVG_VOLUME,
-                early_mode=False, analyze_1h_mode=True):
+                early_mode=False):
     if symbols is None: symbols = NSE_SYMBOLS
     dt = datetime.now()
     mode = "EARLY BREAKOUT" if early_mode else "STANDARD"
     print("="*70)
     print(f"  NSE SWING SCANNER — {mode} — {dt.strftime('%Y-%m-%d %H:%M')} IST")
-    print(f"  {'1H TV-Style Analysis: ON' if analyze_1h_mode else '1H Analysis: OFF'}")
+    print(f"  Signal type: Daily TV-Style (BUY-R/BUY-B/SELL-R/SELL-B)")
     print("="*70)
 
     # Step 1: Download daily data (include Nifty 50 index)
@@ -649,64 +672,22 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
         symbols_list = list(NSE_SYMBOLS)
     if NIFTY_SPOT not in symbols_list:
         symbols_list.append(NIFTY_SPOT)
-    print(f"\n[1/4] Downloading {len(symbols_list)} stocks + Nifty50 (Daily)...")
+    print(f"\n[1/3] Downloading {len(symbols_list)} stocks + Nifty50 (Daily)...")
     stock_data, failed, nr = download_data(symbols_list)
     print(f"  Loaded: {len(stock_data)}, Failed: {len(failed)}")
 
-    # Step 2a: Screen — Bullish pass
-    print(f"\n[2/4] Screening (bullish pass)...")
+    # Step 2: Screen with Daily TV-style signals
+    print(f"\n[2/3] Screening with Daily TV-style signals...")
     results = []
-    bearish_candidates = []  # stocks with valid data but not bullish-qualified
     for sym, df in stock_data.items():
         r = process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max,
                           min_mcap, min_vol, early_mode)
         if r:
             results.append(r)
-        else:
-            # Track failed stocks for bearish pass (skip Nifty — it's always bullish)
-            if sym != NIFTY_SPOT and len(df) > SMA_PERIOD + 10:
-                bearish_candidates.append((sym, df))
-    print(f"  Bullish qualifying: {len(results)}")
+    print(f"  Stocks with signals: {len(results)}")
 
-    # Step 2b: Screen — Bearish pass (for sell signals)
-    if bearish_candidates:
-        print(f"  Bearish pass: checking {len(bearish_candidates)} stocks for sell signals...")
-        for sym, df in bearish_candidates:
-            r = process_stock(sym, df, nr, use_rsi, rsi_min, rsi_max,
-                              min_mcap, min_vol, early_mode, bearish_mode=True)
-            if r:
-                results.append(r)
-        print(f"  Total after bearish pass: {len(results)}")
-
-    # Step 3: 1H Entry Analysis (parallel)
-    if analyze_1h_mode and results:
-        print(f"\n[3/4] 1-Hour TV-Style Analysis ({len(results)} stocks, parallel)...")
-        def _build_1h_sym(symbol):
-            """Map display symbol to yfinance symbol for 1H analysis."""
-            if symbol == "NIFTY50":
-                return "^NSEI"
-            return symbol + ".NS"
-        syms_1h = [_build_1h_sym(r["Symbol"]) for r in results]
-        results_map = {r["Symbol"]: r for r in results}
-
-        with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
-            fut = {ex.submit(analyze_1h, s): s for s in syms_1h}
-            done = 0
-            for f in as_completed(fut):
-                sym, signal, detail, zone = f.result()
-                base = strip_ns(sym)
-                if base in results_map:
-                    results_map[base]["1H_Setup"] = signal
-                    results_map[base]["1H_Detail"] = detail
-                    results_map[base]["1H_Zone"] = zone
-                done += 1
-                if done % 5 == 0 or done == len(syms_1h):
-                    print(f"  {done}/{len(syms_1h)} analyzed")
-
-        results = list(results_map.values())
-
-    # Step 4: Rank & Export
-    print(f"\n[4/4] Ranking & Exporting...")
+    # Step 3: Rank & Export
+    print(f"\n[3/3] Ranking & Exporting...")
     if not results:
         print("  No stocks passed filters.")
         return pd.DataFrame()
@@ -789,8 +770,7 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
     print(f"  SUMMARY")
     print(f"{'='*70}")
     print(f"  Total: {total}  |  Fresh Breakouts: {fresh}  |  Near Miss: {near}")
-    if analyze_1h_mode:
-        print(f"  BUY-R: {buy_r} | BUY-B: {buy_b} | SELL-R: {sell_r} | SELL-B: {sell_b} | Neutral: {neutral}")
+    print(f"  BUY-R: {buy_r} | BUY-B: {buy_b} | SELL-R: {sell_r} | SELL-B: {sell_b} | Neutral: {neutral}")
     print(f"{'='*70}")
 
     if not df_out.empty:
@@ -810,7 +790,7 @@ def run_scanner(symbols=None, output_dir=".", use_rsi=USE_RSI_FILTER,
 
 # ─── CLI ─────────────────────────────────────────────────────────────
 def main():
-    p = argparse.ArgumentParser(description="NSE Swing Scanner with 1H Entry Analysis")
+    p = argparse.ArgumentParser(description="NSE Swing Scanner — Daily TV-Style Signals")
     p.add_argument("-o","--output-dir",default=OUTPUT_DIR)
     p.add_argument("--no-rsi",action="store_true",help="Disable RSI filter")
     p.add_argument("--rsi-min",type=float,default=RSI_MIN)
@@ -819,7 +799,6 @@ def main():
     p.add_argument("--min-volume",type=int,default=MIN_AVG_VOLUME)
     p.add_argument("--symbols-file",type=str,help="File with NSE symbols")
     p.add_argument("--early",action="store_true",help="Early breakout mode")
-    p.add_argument("--no-1h",action="store_true",help="Skip 1-hour entry analysis")
     args = p.parse_args()
 
     syms = NSE_SYMBOLS
@@ -830,7 +809,7 @@ def main():
 
     run_scanner(syms, args.output_dir, not args.no_rsi,
                 args.rsi_min, args.rsi_max, args.min_mcap,
-                args.min_volume, args.early, not args.no_1h)
+                args.min_volume, args.early)
 
 if __name__ == "__main__":
     main()
