@@ -263,10 +263,42 @@ def stop_scheduler():
         _scheduler = None
 
 # ─── FastAPI App ────────────────────────────────────────────────────
+def rebuild_positions_from_csv():
+    """Recreate trade positions from the latest CSV if DB is empty."""
+    try:
+        tracker = get_tracker()
+        health = tracker.diagnose_health()
+        if health["total_rows"] > 0:
+            return  # DB already has data, skip
+        csv_path = find_latest_csv()
+        if not csv_path:
+            logger.info("Auto-rebuild: no CSV found, skipping")
+            return
+        logger.info(f"Auto-rebuild: DB empty, restoring from {csv_path}")
+        df = pd.read_csv(csv_path)
+        df = normalize_csv_data(df)
+        # Only take BUY-R/BUY-B rows
+        buy_rows = df[df["1H_Setup"].isin(["BUY-R", "BUY-B"])]
+        if buy_rows.empty:
+            logger.info("Auto-rebuild: no BUY signals in CSV")
+            return
+        results = json.loads(buy_rows.to_json(orient="records", date_format="iso"))
+        for row in results:
+            for k, v in row.items():
+                if isinstance(v, (np.integer,)): row[k] = int(v)
+                elif isinstance(v, (np.floating,)): row[k] = round(float(v), 2)
+                elif pd.isna(v): row[k] = None
+        created = tracker.create_positions_from_results(results, same_day_entry=False)
+        if created:
+            logger.info(f"Auto-rebuild: created {len(created)} positions from CSV: {created}")
+    except Exception as e:
+        logger.error(f"Auto-rebuild error: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     STATIC_DIR.mkdir(exist_ok=True)
     (OUTPUT_DIR / "templates").mkdir(exist_ok=True)
+    rebuild_positions_from_csv()
     start_scheduler()
     yield
     stop_scheduler()
